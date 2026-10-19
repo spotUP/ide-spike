@@ -1,0 +1,87 @@
+Cost probes in relative_move (target from _nc_str_null) skip formatting
+parameterized strings: the costs come from _nc_mvcur_init's _xxx_cost
+fields, a format that cannot expand already costs NC_INFINITY there, and
+expansion does not depend on the parameter values. Apply with -p1 inside ncurses/.
+--- a/tty/lib_mvcur.c	2026-10-19 17:12:29
++++ b/tty/lib_mvcur.c	2026-10-19 17:12:29
+@@ -574,6 +574,16 @@
+ {
+     string_desc save;
+     int n, vcost = 0, hcost = 0;
++    /*
++     * A cost probe (target made by _nc_str_null) only needs the costs, which
++     * come from the _xxx_cost fields set by _nc_mvcur_init.  Formatting a
++     * parameterized string there is wasted work: a format that cannot be
++     * expanded already has an infinite cost, and whether it expands does not
++     * depend on the parameter values.
++     */
++    bool probe = (target->s_head == NULL);
++
++#define ParmCat(dst, cap) (probe || _nc_safe_strcat(dst, cap))
+ 
+     (void) _nc_str_copy(&save, target);
+ 
+@@ -581,7 +591,7 @@
+ 	vcost = NC_INFINITY;
+ 
+ 	if (row_address != NULL
+-	    && _nc_safe_strcat(target, TIPARM_1(row_address, to_y))) {
++	    && ParmCat(target, TIPARM_1(row_address, to_y))) {
+ 	    vcost = SP_PARM->_vpa_cost;
+ 	}
+ 
+@@ -590,8 +600,8 @@
+ 
+ 	    if (parm_down_cursor
+ 		&& SP_PARM->_cud_cost < vcost
+-		&& _nc_safe_strcat(_nc_str_copy(target, &save),
+-				   TIPARM_1(parm_down_cursor, n))) {
++		&& ParmCat(_nc_str_copy(target, &save),
++			   TIPARM_1(parm_down_cursor, n))) {
+ 		vcost = SP_PARM->_cud_cost;
+ 	    }
+ 
+@@ -606,8 +616,8 @@
+ 
+ 	    if (parm_up_cursor
+ 		&& SP_PARM->_cuu_cost < vcost
+-		&& _nc_safe_strcat(_nc_str_copy(target, &save),
+-				   TIPARM_1(parm_up_cursor, n))) {
++		&& ParmCat(_nc_str_copy(target, &save),
++			   TIPARM_1(parm_up_cursor, n))) {
+ 		vcost = SP_PARM->_cuu_cost;
+ 	    }
+ 
+@@ -630,8 +640,8 @@
+ 	hcost = NC_INFINITY;
+ 
+ 	if (column_address
+-	    && _nc_safe_strcat(_nc_str_copy(target, &save),
+-			       TIPARM_1(column_address, to_x))) {
++	    && ParmCat(_nc_str_copy(target, &save),
++		       TIPARM_1(column_address, to_x))) {
+ 	    hcost = SP_PARM->_hpa_cost;
+ 	}
+ 
+@@ -640,8 +650,8 @@
+ 
+ 	    if (parm_right_cursor
+ 		&& SP_PARM->_cuf_cost < hcost
+-		&& _nc_safe_strcat(_nc_str_copy(target, &save),
+-				   TIPARM_1(parm_right_cursor, n))) {
++		&& ParmCat(_nc_str_copy(target, &save),
++			   TIPARM_1(parm_right_cursor, n))) {
+ 		hcost = SP_PARM->_cuf_cost;
+ 	    }
+ 
+@@ -733,8 +743,8 @@
+ 
+ 	    if (parm_left_cursor
+ 		&& SP_PARM->_cub_cost < hcost
+-		&& _nc_safe_strcat(_nc_str_copy(target, &save),
+-				   TIPARM_1(parm_left_cursor, n))) {
++		&& ParmCat(_nc_str_copy(target, &save),
++			   TIPARM_1(parm_left_cursor, n))) {
+ 		hcost = SP_PARM->_cub_cost;
+ 	    }
+ 
