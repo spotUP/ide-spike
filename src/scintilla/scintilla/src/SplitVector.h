@@ -9,14 +9,38 @@
 #ifndef SPLITVECTOR_H
 #define SPLITVECTOR_H
 
+#include <cstring>
+#include <type_traits>
+#include <memory>
+#include <utility>
+
 namespace Scintilla::Internal {
+
+// Allocator whose argument-less construct() default-initialises: vector::resize leaves new
+// bytes of the gap uninitialised instead of zero-filling them (a byte loop here: ~70 ms for
+// each 100 KB buffer of a document load on the A1200). The gap's contents are never read.
+template <typename T>
+struct NoInitAllocator : std::allocator<T> {
+	template <typename U> struct rebind { using other = NoInitAllocator<U>; };
+	NoInitAllocator() noexcept = default;
+	template <typename U> NoInitAllocator(const NoInitAllocator<U> &) noexcept {}
+	template <typename U>
+	void construct(U *p) noexcept(std::is_nothrow_default_constructible<U>::value) {
+		::new (static_cast<void *>(p)) U;
+	}
+	template <typename U, typename... Args>
+	void construct(U *p, Args &&... args) {
+		::new (static_cast<void *>(p)) U(std::forward<Args>(args)...);
+	}
+};
+
 
 template <typename T>
 class SplitVector {
 	static constexpr size_t growthPortion = 6;
 	static constexpr size_t initialGrowSize = 8;
 protected:
-	std::vector<T> body;
+	std::vector<T, typename std::conditional<sizeof(T) == 1 && std::is_trivially_copyable<T>::value, NoInitAllocator<T>, std::allocator<T>>::type> body;
 	T empty;	/// Returned as the result of out-of-bounds access.
 	ptrdiff_t lengthBody = 0;
 	ptrdiff_t part1Length = 0;
@@ -188,7 +212,12 @@ public:
 			}
 			RoomFor(insertLength);
 			GapTo(position);
-			std::fill_n(body.data() + part1Length, insertLength, v);
+			if constexpr (sizeof(T) == 1 && std::is_trivially_copyable<T>::value) {
+				// memset: std::fill_n is a byte loop (132 ms for 100 KB of style bytes on the A1200)
+				memset(static_cast<void *>(body.data() + part1Length), static_cast<int>(v), insertLength);
+			} else {
+				std::fill_n(body.data() + part1Length, insertLength, v);
+			}
 			lengthBody += insertLength;
 			part1Length += insertLength;
 			gapLength -= insertLength;
@@ -236,7 +265,12 @@ public:
 			}
 			RoomFor(insertLength);
 			GapTo(positionToInsert);
-			std::copy_n(arr + positionFrom, insertLength, body.data() + part1Length);
+			if constexpr (std::is_trivially_copyable<T>::value) {
+				// memcpy: std::copy_n is an element loop (85 ms for 100 KB on the A1200)
+				memcpy(static_cast<void *>(body.data() + part1Length), arr + positionFrom, insertLength * sizeof(T));
+			} else {
+				std::copy_n(arr + positionFrom, insertLength, body.data() + part1Length);
+			}
 			lengthBody += insertLength;
 			part1Length += insertLength;
 			gapLength -= insertLength;

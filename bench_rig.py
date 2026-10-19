@@ -54,7 +54,7 @@ MEMO_ARG = ''  # '', 'off' or 'verify': the vid_puts memo switch (env BENCH_MEMO
 
 
 def bench(v, timeout):
-    return window(['VTC:ide/%s --bench VTC:ide/sh_expand.c RAM:b.txt %s 2>RAM:b.err' % (v, MEMO_ARG or 'on'), 'echo rc=$? >RAM:b.rc'], timeout)
+    return window(['VTC:ide/%s --bench VTC:ide/sh_expand.c RAM:b.txt %s %s 2>RAM:b.err' % (v, MEMO_ARG or 'on', os.environ.get('BENCH_FLAGS', 'x')), 'echo rc=$? >RAM:b.rc'], timeout)
 
 
 def functional(v):

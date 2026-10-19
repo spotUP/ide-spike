@@ -49,14 +49,14 @@ static long nowms() {
 #include <unistd.h>
 #include <fcntl.h>
 extern "C" ssize_t __real_write(int, const void *, size_t);
-static long wr_calls, wr_bytes, wr_ms;
+static long wr_calls, wr_bytes, wr_ms; static long wr_each[8], wr_each_n[8];
 static int wr_on;
 static char *cap_buf; static long cap_len; static const long cap_max = 256 * 1024;
 extern "C" ssize_t __wrap_write(int fd, const void *b, size_t n) {
 	if (fd != 1 || !wr_on) return __real_write(fd, b, n);
 	long t = nowms();
 	ssize_t r = __real_write(fd, b, n);
-	wr_ms += nowms() - t; wr_calls++; wr_bytes += (long)n;
+	wr_ms += nowms() - t; if (wr_calls < 8) { wr_each[wr_calls] = nowms() - t; wr_each_n[wr_calls] = (long)n; } wr_calls++; wr_bytes += (long)n;
 	if (cap_buf && cap_len + (long)n <= cap_max) { memcpy(cap_buf + cap_len, b, n); cap_len += (long)n; }
 	return r;
 }
@@ -141,6 +141,7 @@ int main(int argc, char **argv) {
 	bool bench = argc > 2 && !strcmp(argv[1], "--bench");
 	const char *path = bench ? argv[2] : (argc > 1 ? argv[1] : NULL);
 	if (bench && argc > 4) { _nc_vidmemo_mode = !strcmp(argv[4], "off") ? 0 : !strcmp(argv[4], "verify") ? 2 : 1; }
+	const char *flags = bench && argc > 5 ? argv[5] : NULL;
 	setlocale(LC_CTYPE, "");
 	MARK("setlocale");
 	initscr(), raw(), cbreak(), noecho(), start_color();
@@ -165,7 +166,7 @@ int main(int argc, char **argv) {
 	SSM(SCI_STYLESETFORE, SCE_C_STRING, 0xFF00FF);
 	SSM(SCI_STYLESETBOLD, SCE_C_OPERATOR, 1);
 	unsigned long avail_before = availkb(), avail_min = avail_before;
-	long t0 = nowms();
+	long t0 = nowms(), t_read = 0, t_add = 0, t_colour = 0, t_setup = 0;
 	if (path) {
 		FILE *f = fopen(path, "rb");
 		if (f) {
@@ -177,7 +178,11 @@ int main(int argc, char **argv) {
 			buf[got] = 0;
 			fclose(f);
 			MARK("read file");
+			t_read = nowms() - t0;
+			if (flags && strchr(flags, 'u')) SSM(SCI_SETUNDOCOLLECTION, 0, 0);
 			SSM(SCI_ADDTEXT, got, (sptr_t)buf);
+			if (flags && strchr(flags, 'u')) { SSM(SCI_EMPTYUNDOBUFFER, 0, 0); SSM(SCI_SETUNDOCOLLECTION, 1, 0); }
+			t_add = nowms() - t0 - t_read;
 			MARK("ADDTEXT");
 			SSM(SCI_GOTOPOS, 0, 0);
 			free(buf);
@@ -190,11 +195,18 @@ int main(int argc, char **argv) {
 		   6.7 s of the 9.5 s open on the 020 (results/open.md). Editor::Paint styles the visible
 		   page on demand; the rest is lexed as it scrolls into view. */
 		MARK("COLOURISE");
+		if (!(flags && strchr(flags, 'n'))) { long tc = nowms(); SSM(SCI_COLOURISE, 0, SSM(SCI_POSITIONFROMLINE, LINES + 1, 0)); t_colour = nowms() - tc; }
+		t_setup = nowms() - t0;
 		scintilla_noutrefresh(sci);
 		MARK("refresh");
 		long open_paint_ms = nowms() - t0;
-		cap_buf = (char *)malloc(cap_max); cap_len = 0; wr_on = 1;
+		cap_buf = (char *)malloc(cap_max); cap_len = 0; wr_on = 1; PROBE_RESET();
+		long t_dou0 = nowms();
 		doupdate();
+		long t_dou = nowms() - t_dou0;
+		char open_probes[512]; snprintf(open_probes, sizeof open_probes, "BENCH open_probes flush=%ld/%ldms mvcur=%ld/%ldms vidputs=%ld/%ldms scrollopt=%ld/%ldms hashmap=%ld/%ldms doupdate=%ldms write_each=%ld:%ld,%ld:%ld,%ld:%ld,%ld:%ld\n",
+			p__nc_flush_sp_n, p__nc_flush_sp_ms, p__nc_mvcur_sp_n, p__nc_mvcur_sp_ms, p_vid_puts_sp_n, p_vid_puts_sp_ms, p__nc_scroll_optimize_sp_n, p__nc_scroll_optimize_sp_ms, p__nc_hash_map_sp_n, p__nc_hash_map_sp_ms, t_dou,
+			wr_each_n[0], wr_each[0], wr_each_n[1], wr_each[1], wr_each_n[2], wr_each[2], wr_each_n[3], wr_each[3]);
 		long open_ms = nowms() - t0;
 		// Sentinel: open must not style past the first screen (whole-document lexing regression).
 		long open_styled_lines = SSM(SCI_LINEFROMPOSITION, SSM(SCI_GETENDSTYLED, 0, 0), 0);
@@ -251,6 +263,22 @@ int main(int argc, char **argv) {
 		long styled = 0, total = (long)SSM(SCI_GETLENGTH, 0, 0);
 		for (long p = 0; p < total; p += 7) styled += SSM(SCI_GETSTYLEAT, p, 0) != 0;
 		MARK("scroll");
+		char add_parts[600] = "";
+		if (flags && strchr(flags, 'm') && path) {
+			FILE *f = fopen(path, "rb"); fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+			char *b = (char *)malloc(n + 1), *b2 = (char *)malloc(n + 1); n = (long)fread(b, 1, n, f); fclose(f);
+			memset(b2, 'a', n);
+			sptr_t d = SSM(SCI_CREATEDOCUMENT, 0, 0); SSM(SCI_SETDOCPOINTER, 0, d);
+			long x = nowms(); SSM(SCI_ADDTEXT, n, (sptr_t)b); long a_norm = nowms() - x;
+			SSM(SCI_CLEARALL, 0, 0); x = nowms(); SSM(SCI_ADDTEXT, n, (sptr_t)b); long a_norm2 = nowms() - x;
+			SSM(SCI_CLEARALL, 0, 0); x = nowms(); SSM(SCI_ADDTEXT, n, (sptr_t)b2); long a_noeol = nowms() - x;
+			SSM(SCI_CLEARALL, 0, 0); SSM(SCI_SETUNDOCOLLECTION, 0, 0); x = nowms(); SSM(SCI_ADDTEXT, n, (sptr_t)b); long a_noundo = nowms() - x; SSM(SCI_SETUNDOCOLLECTION, 1, 0);
+			SSM(SCI_CLEARALL, 0, 0); x = nowms(); SSM(SCI_ADDTEXT, 1000, (sptr_t)b); long a_1k = nowms() - x;
+			volatile long sink = 0; x = nowms(); for (int r = 0; r < 10; r++) memcpy(b2, b, n); long c_memcpy = nowms() - x;
+			x = nowms(); for (int r = 0; r < 10; r++) { unsigned char *q = (unsigned char *)b2; for (long i = 0; i < n; i++) q[i] = 0; } long c_fill = nowms() - x;
+			x = nowms(); for (int r = 0; r < 10; r++) { long c = 0; for (long i = 0; i < n; i++) c += b[i] == '\n'; sink += c; } long c_scan = nowms() - x;
+			snprintf(add_parts, sizeof add_parts, "BENCH addtext_parts bytes=%ld normal=%ld normal2=%ld noeol=%ld noundo=%ld first1k=%ld | per100KB x10: memcpy=%ld bytefill=%ld bytescan=%ld ms\n", n, a_norm, a_norm2, a_noeol, a_noundo, a_1k, c_memcpy, c_fill, c_scan);
+		}
 		scintilla_delete(sci);
 		endwin();
 		MARK("endwin");
@@ -260,6 +288,8 @@ int main(int argc, char **argv) {
 		       avail_start, avail_before, avail_after, avail_min, (long)(avail_start - avail_min), clockres(), styled, (total + 6) / 7, ixrt_ctor_count);
 		fprintf(o, "BENCH split open_paint_ms=%ld open_tty_ms=%ld key_paint_ms=%ld key_tty_ms=%ld scroll_paint_ms=%ld scroll_tty_ms=%ld\n",
 		       open_paint_ms, open_ms - open_paint_ms, key_ms - key_tty_ms, key_tty_ms, scroll_ms - scroll_tty_ms, scroll_tty_ms);
+		fprintf(o, "BENCH open_parts read_ms=%ld addtext_ms=%ld colour_ms=%ld setup_ms=%ld refresh_ms=%ld\n", t_read, t_add, t_colour, t_setup - t_read - t_add - t_colour, open_paint_ms - t_setup);
+		fputs(open_probes, o); fputs(add_parts, o);
 		fprintf(o, "BENCH open_styled_lines=%ld of %ld rows=%d\n", open_styled_lines, open_lines, LINES);
 		fprintf(o, "BENCH draw_transparent_runs=%ld\n", g_sc_transparent_runs);
 		fprintf(o, "BENCH tparm_lookups=%ld tree_walks=%ld\n", tp_look, tp_walk);
