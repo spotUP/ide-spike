@@ -4,7 +4,7 @@ files into VTC:, a vsh script in an XCON: window started by NewShell, a done mar
 
   bench_rig.py --machine 060|a1200 --variants scidemo,scidemo-lite --runs N [--functional] [--timeout S] [--force]
 Results: results/<variant>-<machine>[-func].txt (skipped when present: resumable). The rig must be up."""
-import argparse, pathlib, re, shutil, struct, subprocess, sys, time
+import argparse, os, pathlib, re, shutil, struct, subprocess, sys, time
 VT = pathlib.Path('/Users/spot/Code/UP-Term/vtcon/tools/rig')
 sys.path.insert(0, str(VT))
 import paths, ami, ixpty_rig
@@ -50,8 +50,11 @@ def window(script_lines, timeout):
     return True, g('b.rc'), g('b.err'), g('b.txt')
 
 
+MEMO_ARG = ''  # '', 'off' or 'verify': the vid_puts memo switch (env BENCH_MEMO)
+
+
 def bench(v, timeout):
-    return window(['VTC:ide/%s --bench VTC:ide/sh_expand.c RAM:b.txt 2>RAM:b.err' % v, 'echo rc=$? >RAM:b.rc'], timeout)
+    return window(['VTC:ide/%s --bench VTC:ide/sh_expand.c RAM:b.txt %s 2>RAM:b.err' % (v, MEMO_ARG or 'on'), 'echo rc=$? >RAM:b.rc'], timeout)
 
 
 def functional(v):
@@ -80,6 +83,16 @@ def open_styled_ok(txt):
     return None if not m else int(m.group(1)) <= int(m.group(3)) + 2
 
 
+def machine_ok(txt, machine):
+    """the rig really is the --machine asked for: --machine only names the result file, and a rig left
+    in (or rebooted into) its default 060 + 1 GB mode once gave "a1200" timings 13x too fast. RAM is the
+    proxy: the a1200 config has ~64 MB, the 060 modes 128 MB or more. None when the line is missing."""
+    m = re.search(r'BENCH avail_start_kb=(\d+)', txt)
+    if not m:
+        return None
+    return (int(m.group(1)) < 100000) == (machine == 'a1200')
+
+
 def one_phase_ok(txt):
     """scroll-paint sentinel: with one draw phase no text run goes through DrawTextTransparent (it reads
     every cell back from the screen: 165 ms of the 490 ms scroll paint on the 020). None when missing."""
@@ -90,11 +103,21 @@ def one_phase_ok(txt):
 def tparm_cache_ok(txt):
     """tparm sentinel: the capability-format cache is looked up by string address; the strcmp tree walk
     (3.3 s of 020 scroll time) happens only for a first sight. None when the line is missing."""
-    m = re.search(r'BENCH tparm_lookups=(\d+) tree_walks=(\d+) fast=(\d+)', txt)
+    m = re.search(r'BENCH tparm_lookups=(\d+) tree_walks=(\d+)', txt)
     return None if not m else int(m.group(1)) > 0 and int(m.group(2)) * 20 <= int(m.group(1))
 
 
+def vidmemo_ok(txt):
+    """vid_puts memo sentinel: at least 30 % of the scroll's vid_puts calls replay a memoised byte string,
+    and none differ from the real code in verify mode. Measured on the 020 2026-10-19: 2090 of 6062 (34 %),
+    which cut vid_puts_colour from 668 to 131 us and scroll by 9 %. None when the line is missing."""
+    m = re.search(r'BENCH vidmemo mode=(\d+) calls=(\d+) hits=(\d+) misses=(\d+) bad=(\d+)', txt)
+    return None if not m else int(m.group(2)) > 0 and int(m.group(3)) * 10 >= int(m.group(2)) * 3 and int(m.group(5)) == 0
+
+
 def main():
+    global MEMO_ARG
+    MEMO_ARG = os.environ.get('BENCH_MEMO', '')
     ap = argparse.ArgumentParser()
     ap.add_argument('--machine', required=True)
     ap.add_argument('--variants', default='scidemo,scidemo-lite')
@@ -124,15 +147,23 @@ def main():
                 if not ok:
                     # a missing line counts too: a crash after open once dropped it silently
                     res[-1] += '\n[FAIL] open styled past the first screen' if ok is False else '\n[FAIL] no open_styled_lines line'
-                    bad.append(v)
+                    bad.append((v, res[-1].rsplit('\n', 1)[-1]))
                 ph = one_phase_ok(txt) if fin else True
                 if not ph:
                     res[-1] += '\n[FAIL] text drawn in two phases (DrawTextTransparent)' if ph is False else '\n[FAIL] no draw_transparent_runs line'
-                    bad.append(v)
+                    bad.append((v, res[-1].rsplit('\n', 1)[-1]))
+                mc = machine_ok(txt, a.machine) if fin else True
+                if not mc:
+                    res[-1] += '\n[FAIL] rig is not in %s mode (restart it with the matching rig.py start flag)' % a.machine if mc is False else '\n[FAIL] no avail_start_kb line'
+                    bad.append((v, res[-1].rsplit('\n', 1)[-1]))
                 tc = tparm_cache_ok(txt) if fin else True
                 if not tc:
                     res[-1] += '\n[FAIL] tparm format cache walked the tree per call' if tc is False else '\n[FAIL] no tparm_lookups line (link the private ncurses: NCDIR=build/ncurses/obj/lib)'
-                    bad.append(v)
+                    bad.append((v, res[-1].rsplit('\n', 1)[-1]))
+                vm = vidmemo_ok(txt) if fin else True
+                if not vm and MEMO_ARG in ('', 'on'):
+                    res[-1] += '\n[FAIL] vid_puts memo hits < 30% of calls' if vm is False else '\n[FAIL] no vidmemo line'
+                    bad.append((v, res[-1].rsplit('\n', 1)[-1]))
                 print(res[-1])
                 if not fin:
                     break
@@ -143,7 +174,7 @@ def main():
             # fail on "object is in use" and record a bogus result, so stop here: restart the rig first
             sys.exit('timeout on %s: restart the rig before the next variant' % v)
     if bad:
-        sys.exit('[FAIL] open-path sentinel: %s' % ' '.join(sorted(set(bad))))
+        sys.exit('\n'.join(sorted(set('%s: %s' % b for b in bad))))
 
 
 if __name__ == '__main__':

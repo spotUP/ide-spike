@@ -1,0 +1,388 @@
+diff --color -ruN a/base/lib_color.c b/base/lib_color.c
+--- a/base/lib_color.c	2026-10-19 14:25:40
++++ b/base/lib_color.c	2026-10-19 14:25:45
+@@ -361,6 +361,7 @@
+     int result = ERR;
+ 
+     T((T_CALLED("start_color(%p)"), (void *) SP_PARM));
++    ++_nc_vidmemo_gen;
+ 
+     if (SP_PARM == NULL) {
+ 	result = ERR;
+@@ -651,6 +652,9 @@
+ 	_nc_change_pair(sp, pair);
+     }
+ 
++    /* callers re-init unchanged pairs constantly; only a real change empties the vid_puts memo */
++    if (!isSamePair(previous, result))
++	++_nc_vidmemo_gen;
+     _nc_reset_color_pair(sp, pair, &result);
+     sp->_color_pairs[pair] = result;
+     _nc_set_color_pair(sp, pair, cpINIT);
+@@ -707,6 +711,7 @@
+ NCURSES_EXPORT(int)
+ _nc_init_color(SCREEN *sp, int color, int r, int g, int b)
+ {
++    ++_nc_vidmemo_gen;
+     int result = ERR;
+     int maxcolors;
+ 
+@@ -1117,6 +1122,7 @@
+ NCURSES_EXPORT(void)
+ NCURSES_SP_NAME(reset_color_pairs) (NCURSES_SP_DCL0)
+ {
++    ++_nc_vidmemo_gen;
+     if (SP_PARM != NULL) {
+ 	if (SP_PARM->_color_pairs) {
+ 	    _nc_free_ordered_pairs(SP_PARM);
+diff --color -ruN a/base/lib_dft_fgbg.c b/base/lib_dft_fgbg.c
+--- a/base/lib_dft_fgbg.c	2026-10-19 14:25:41
++++ b/base/lib_dft_fgbg.c	2026-10-19 14:25:46
+@@ -69,6 +69,7 @@
+     int code = ERR;
+ 
+     T((T_CALLED("assume_default_colors(%p,%d,%d)"), (void *) SP_PARM, fg, bg));
++    ++_nc_vidmemo_gen;
+     if (SP_PARM != NULL) {
+ #if USE_TERM_DRIVER
+ 	code = CallDriver_2(SP_PARM, td_defaultcolors, fg, bg);
+diff --color -ruN a/base/new_pair.c b/base/new_pair.c
+--- a/base/new_pair.c	2026-10-19 14:25:40
++++ b/base/new_pair.c	2026-10-19 14:25:46
+@@ -338,6 +338,7 @@
+ {
+     int result = ERR;
+     T((T_CALLED("free_pair(%d)"), pair));
++    ++_nc_vidmemo_gen;
+     if (ValidPair(SP_PARM, pair) && pair < SP_PARM->_pair_alloc) {
+ 	colorpair_t *cp = &(SP_PARM->_color_pairs[pair]);
+ 	if (pair != 0) {
+diff --color -ruN a/curses.priv.h b/curses.priv.h
+--- a/curses.priv.h	2026-10-19 14:25:38
++++ b/curses.priv.h	2026-10-19 14:25:44
+@@ -244,6 +244,8 @@
+  * Not all platforms have memmove; some have an equivalent bcopy.  (Some may
+  * have neither).
+  */
++extern NCURSES_EXPORT_VAR(unsigned long) _nc_vidmemo_gen;	/* vid_puts memo generation */
++
+ #if USE_OK_BCOPY
+ #define memmove(d,s,n) bcopy(s,d,n)
+ #elif USE_MY_MEMMOVE
+@@ -1472,11 +1474,22 @@
+ #define NewChar(ch)	NewChar2(ChCharOf(ch), ChAttrOf(ch))
+ 
+ #if CCHARW_MAX > 1
++#if CCHARW_MAX == 5
++/* field compares, not a memcmp call per cell: a call costs ~20 us on a 68020 and doupdate compares every cell */
+ #define CharEq(a,b)	(((a).attr == (b).attr) \
++			 && (a).chars[0] == (b).chars[0] \
++			 && (a).chars[1] == (b).chars[1] \
++			 && (a).chars[2] == (b).chars[2] \
++			 && (a).chars[3] == (b).chars[3] \
++			 && (a).chars[4] == (b).chars[4] \
++			if_EXT_COLORS(&& (a).ext_color == (b).ext_color))
++#else
++#define CharEq(a,b)	(((a).attr == (b).attr) \
+ 			 && !memcmp((a).chars, \
+ 				    (b).chars, \
+ 				    CCHARW_MAX * sizeof((b).chars[0])) \
+ 			if_EXT_COLORS(&& (a).ext_color == (b).ext_color))
++#endif
+ #else
+ #define CharEq(a,b)	(!memcmp(&(a), &(b), sizeof(a)))
+ #endif
+diff --color -ruN a/tinfo/lib_cur_term.c b/tinfo/lib_cur_term.c
+--- a/tinfo/lib_cur_term.c	2026-10-19 14:25:36
++++ b/tinfo/lib_cur_term.c	2026-10-19 14:25:43
+@@ -83,6 +83,7 @@
+     TERMINAL *oldterm;
+ 
+     T((T_CALLED("set_curterm(%p)"), (void *) termp));
++    ++_nc_vidmemo_gen;
+ 
+     _nc_lock_global(curses);
+     oldterm = cur_term;
+diff --color -ruN a/tinfo/lib_tparm.c b/tinfo/lib_tparm.c
+--- a/tinfo/lib_tparm.c	2026-10-19 14:25:35
++++ b/tinfo/lib_tparm.c	2026-10-19 14:25:42
+@@ -1293,48 +1293,7 @@
+ #define ValidCap(allow_strings) 1
+ #endif
+ 
+-#if HAVE_TSEARCH
+-/*
+- * Repeat call of a capability whose result is already memoised: look the
+- * format up by address, gather the numeric parameters, compare them with the
+- * memo and return its text.  Skips tparm_setup's clearing and copying of a
+- * TPARM_DATA, the stack setup and the copy into the output buffer (about 280
+- * us a call on a 68020 at 14 MHz, three calls per colour change).  The text
+- * is valid until the next call, like the output buffer.  Returns NULL when
+- * the general path must run.
+- */
+-NCURSES_EXPORT_VAR(long) _nc_tparm_fast = 0;	/* calls answered here */
+ 
+-static char *
+-tparm_fast(const char *string, int use_TPARM_ARG, va_list ap)
+-{
+-    unsigned slot = (unsigned) TPARM_PTR_SLOT(string);
+-    TPARM_DATA *fs = (TPARM_DATA *) tparm_ptr_cache[slot].entry;
+-    TPARM_ARG param[NUM_PARM];
+-    TPARM_MEMO *memo;
+-    unsigned hash = 0;
+-    int n;
+-
+-    if (tparm_ptr_cache[slot].key != string
+-	|| fs->memo == NULL
+-	|| fs->tparm_type != 0
+-	|| strcmp(fs->format, string) != 0)
+-	return NULL;
+-    for (n = 0; n < fs->num_actual; ++n) {
+-	param[n] = use_TPARM_ARG ? va_arg(ap, TPARM_ARG) : (TPARM_ARG) va_arg(ap, int);
+-	hash = hash * 31u + (unsigned) param[n];
+-    }
+-    memo = fs->memo + (hash % TPARM_MEMO_SIZE);
+-    if (!memo->used
+-	|| memcmp(memo->param, param, sizeof(TPARM_ARG) * (size_t) fs->num_actual))
+-	return NULL;
+-    ++_nc_tparm_fast;
+-    _nc_tparm_err = 0;
+-    return memo->text;
+-}
+-
+-#endif
+-
+ #if NCURSES_TPARM_VARARGS
+ 
+ NCURSES_EXPORT(char *)
+@@ -1343,16 +1302,6 @@
+     TPARM_STATE *tps = get_tparm_state(cur_term);
+     TPARM_DATA myData;
+     char *result = NULL;
+-#if HAVE_TSEARCH
+-    {
+-	va_list fp;
+-	va_start(fp, string);
+-	result = tparm_fast(string, TRUE, fp);
+-	va_end(fp);
+-	if (result != NULL)
+-	    return result;
+-    }
+-#endif
+ 
+     _nc_tparm_err = 0;
+ #ifdef TRACE
+@@ -1421,16 +1370,6 @@
+     TPARM_STATE *tps = get_tparm_state(cur_term);
+     TPARM_DATA myData;
+     char *result = NULL;
+-#if HAVE_TSEARCH
+-    {
+-	va_list fp;
+-	va_start(fp, string);
+-	result = tparm_fast(string, FALSE, fp);
+-	va_end(fp);
+-	if (result != NULL)
+-	    return result;
+-    }
+-#endif
+ 
+     _nc_tparm_err = 0;
+ #ifdef TRACE
+diff --color -ruN a/widechar/lib_vid_attr.c b/widechar/lib_vid_attr.c
+--- a/widechar/lib_vid_attr.c	2026-10-19 14:25:37
++++ b/widechar/lib_vid_attr.c	2026-10-19 14:25:44
+@@ -73,12 +73,12 @@
+ 	mode &= ALL_BUT_COLOR; \
+ 	mode |= (attr_t) ColorPair(pair)
+ 
+-NCURSES_EXPORT(int)
+-NCURSES_SP_NAME(vid_puts) (NCURSES_SP_DCLx
+-			   attr_t newmode,
+-			   NCURSES_PAIRS_T pair_arg,
+-			   void *opts OPTIONAL_PAIR,
+-			   NCURSES_SP_OUTC outc)
++static int
++vid_puts_body(NCURSES_SP_DCLx
++	      attr_t newmode,
++	      NCURSES_PAIRS_T pair_arg,
++	      void *opts OPTIONAL_PAIR,
++	      NCURSES_SP_OUTC outc)
+ {
+     int color_pair = pair_arg;
+ #if NCURSES_EXT_COLORS
+@@ -285,6 +285,174 @@
+     (void) opts;
+     set_color(newmode, color_pair);
+     returnCode(NCURSES_SP_NAME(vidputs) (NCURSES_SP_ARGx newmode, outc));
++#endif
++}
++
++/*
++ * Memo of whole vid_puts results.  The escape bytes of one attribute change
++ * are a pure function of (old attribute, old pair, new attribute, new pair)
++ * once the terminal, the colour pairs, the colour table and the default
++ * colours are fixed.  Nothing else feeds them: the cursor position is not
++ * read, the ACS state is the A_ALTCHARSET bit of the old attribute (in the
++ * key), and the SP flags that steer the branches (_coloron, _default_color,
++ * _has_sgr_39_49, _use_rmul/rmso/ritm) change only in start_color,
++ * assume_default_colors and newterm.  Each of those, init_pair, init_color
++ * and set_curterm bump _nc_vidmemo_gen, which empties the memo.  Each hit
++ * saves 3.5 tiparm and tputs calls (~1.5 ms on a 68020).
++ *
++ * _nc_vidmemo_mode: 0 off, 1 on, 2 verify (run the real code on every hit
++ * and count differences in _nc_vidmemo_bad; the real bytes are emitted).
++ */
++#define VIDMEMO_SIZE 4096
++#define VIDMEMO_BYTES 64
++typedef struct {
++    attr_t old_attr, new_attr;
++    int old_pair, new_pair;
++    attr_t end_attr;
++    int end_pair;
++    int rc;
++    short len;			/* -1 empty */
++    unsigned char bytes[VIDMEMO_BYTES];
++} VIDMEMO;
++
++static VIDMEMO vidmemo[VIDMEMO_SIZE];
++static unsigned long vidmemo_seen_gen = ~0UL;
++static void *vidmemo_sp, *vidmemo_term;
++#define VM_CAP_MAX 256
++static unsigned char vm_cap[VM_CAP_MAX];
++static int vm_cap_len;		/* -1 once the output outgrew vm_cap and went straight out */
++static NCURSES_SP_OUTC vm_real_outc;
++static void *vm_real_sp;
++
++NCURSES_EXPORT_VAR(unsigned long) _nc_vidmemo_gen = 0;
++NCURSES_EXPORT_VAR(int) _nc_vidmemo_mode = 1;
++NCURSES_EXPORT_VAR(long) _nc_vidmemo_calls = 0;
++NCURSES_EXPORT_VAR(long) _nc_vidmemo_hits = 0;
++NCURSES_EXPORT_VAR(long) _nc_vidmemo_misses = 0;
++NCURSES_EXPORT_VAR(long) _nc_vidmemo_bad = 0;
++NCURSES_EXPORT_VAR(long) _nc_vidmemo_flush = 0;
++NCURSES_EXPORT_VAR(long) _nc_vidmemo_long = 0;
++
++static int
++vm_capture(NCURSES_SP_DCLx int c)
++{
++    (void) NCURSES_SP_ARG;
++    if (vm_cap_len >= 0 && vm_cap_len < VM_CAP_MAX) {
++	vm_cap[vm_cap_len++] = (unsigned char) c;
++	return OK;
++    }
++    if (vm_cap_len >= 0) {	/* overflow: pass what was captured, then every byte */
++	int i;
++	for (i = 0; i < vm_cap_len; ++i)
++	    vm_real_outc((SCREEN *) vm_real_sp, vm_cap[i]);
++	vm_cap_len = -1;
++    }
++    return vm_real_outc((SCREEN *) vm_real_sp, c);
++}
++
++static void
++vm_emit(NCURSES_SP_DCLx const unsigned char *b, int len, NCURSES_SP_OUTC outc)
++{
++    int i;
++    if (outc == NCURSES_SP_NAME(_nc_outch)
++	&& SP_PARM->out_buffer != NULL
++	&& SP_PARM->out_inuse + (size_t) len + 1 < SP_PARM->out_limit
++	&& HasTInfoTerminal(SP_PARM)) {
++	memcpy(SP_PARM->out_buffer + SP_PARM->out_inuse, b, (size_t) len);
++	SP_PARM->out_inuse += (size_t) len;
++	COUNT_OUTCHARS(len);
++	return;
++    }
++    for (i = 0; i < len; ++i)
++	outc(NCURSES_SP_ARGx b[i]);
++}
++
++NCURSES_EXPORT(int)
++NCURSES_SP_NAME(vid_puts) (NCURSES_SP_DCLx
++			   attr_t newmode,
++			   NCURSES_PAIRS_T pair_arg,
++			   void *opts OPTIONAL_PAIR,
++			   NCURSES_SP_OUTC outc)
++{
++#if NCURSES_EXT_COLORS
++    VIDMEMO *m;
++    attr_t old_attr, nm;
++    int old_pair, rc, new_pair;
++
++    if (_nc_vidmemo_mode == 0 || SP_PARM == NULL
++	|| !IsValidTIScreen(SP_PARM))
++	return vid_puts_body(NCURSES_SP_ARGx newmode, pair_arg, opts, outc);
++
++    if (vidmemo_seen_gen != _nc_vidmemo_gen
++	|| vidmemo_sp != (void *) SP_PARM || vidmemo_term != (void *) cur_term) {
++	int i;
++	++_nc_vidmemo_flush;
++	for (i = 0; i < VIDMEMO_SIZE; ++i)
++	    vidmemo[i].len = -1;
++	vidmemo_seen_gen = _nc_vidmemo_gen;
++	vidmemo_sp = (void *) SP_PARM;
++	vidmemo_term = (void *) cur_term;
++    }
++    old_attr = AttrOf(SCREEN_ATTRS(SP_PARM));
++    old_pair = GetPair(SCREEN_ATTRS(SP_PARM));
++    nm = newmode & A_ATTRIBUTES;
++    new_pair = (opts != NULL) ? *(int *) opts : (int) pair_arg;	/* what the body uses */
++    m = &vidmemo[(((unsigned long) old_attr * 31UL + (unsigned long) nm) * 31UL
++		  + (unsigned long) old_pair * 7UL + (unsigned long) new_pair)
++		 % VIDMEMO_SIZE];
++    ++_nc_vidmemo_calls;
++    if (m->len >= 0 && m->old_attr == old_attr && m->new_attr == nm
++	&& m->old_pair == old_pair && m->new_pair == new_pair) {
++	++_nc_vidmemo_hits;
++	if (_nc_vidmemo_mode == 2) {
++	    /* verify: real code into the capture buffer, compare, emit the real bytes */
++	    vm_cap_len = 0;
++	    vm_real_outc = outc;
++	    vm_real_sp = (void *) SP_PARM;
++	    rc = vid_puts_body(NCURSES_SP_ARGx newmode, pair_arg, opts, vm_capture);
++	    if (vm_cap_len < 0)
++		return rc;
++	    if (vm_cap_len != m->len || memcmp(vm_cap, m->bytes, (size_t) m->len)
++		|| rc != m->rc
++		|| AttrOf(SCREEN_ATTRS(SP_PARM)) != m->end_attr
++		|| GetPair(SCREEN_ATTRS(SP_PARM)) != m->end_pair)
++		++_nc_vidmemo_bad;
++	    if (vm_cap_len > 0)
++		vm_emit(NCURSES_SP_ARGx vm_cap, vm_cap_len, outc);
++	    return rc;
++	}
++	vm_emit(NCURSES_SP_ARGx m->bytes, m->len, outc);
++	SetAttr(SCREEN_ATTRS(SP_PARM), m->end_attr);
++	SetPair(SCREEN_ATTRS(SP_PARM), m->end_pair);
++	return m->rc;
++    }
++    ++_nc_vidmemo_misses;
++    vm_cap_len = 0;
++    vm_real_outc = outc;
++    vm_real_sp = (void *) SP_PARM;
++    rc = vid_puts_body(NCURSES_SP_ARGx newmode, pair_arg, opts, vm_capture);
++    if (vm_cap_len < 0) {
++	++_nc_vidmemo_long;
++	return rc;		/* too long for the memo: already written */
++    }
++    {
++	if (vm_cap_len <= VIDMEMO_BYTES) {
++	    m->old_attr = old_attr;
++	    m->new_attr = nm;
++	    m->old_pair = old_pair;
++	    m->new_pair = new_pair;
++	    m->end_attr = AttrOf(SCREEN_ATTRS(SP_PARM));
++	    m->end_pair = GetPair(SCREEN_ATTRS(SP_PARM));
++	    m->rc = rc;
++	    m->len = (short) vm_cap_len;
++	    memcpy(m->bytes, vm_cap, (size_t) vm_cap_len);
++	}
++	if (vm_cap_len > 0)
++	    vm_emit(NCURSES_SP_ARGx vm_cap, vm_cap_len, outc);
++	return rc;
++    }
++#else
++    return vid_puts_body(NCURSES_SP_ARGx newmode, pair_arg, opts, outc);
+ #endif
+ }
+ 

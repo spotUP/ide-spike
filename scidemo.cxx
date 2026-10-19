@@ -26,7 +26,8 @@ extern "C" void ixrt_mark(const char *, long);
 // that hunk sat right below the stack; scidemo-lite then crashed in a later virtual call.
 extern "C" { unsigned long __stack = 262144; }
 extern "C" long g_sc_transparent_runs;
-extern "C" long _nc_tparm_lookups, _nc_tparm_walks, _nc_tparm_fast; // private ncurses (patches/ncurses-*.patch)
+extern "C" long _nc_tparm_lookups, _nc_tparm_walks;
+extern "C" long _nc_vidmemo_calls, _nc_vidmemo_hits, _nc_vidmemo_misses, _nc_vidmemo_bad, _nc_vidmemo_flush, _nc_vidmemo_long; extern "C" int _nc_vidmemo_mode; // private ncurses (patches/ncurses-*.patch)
 static void scnotification(SciView *, int, SCNotification *, void *) {}
 
 // bench helpers: AvailMem(MEMF_ANY) via exec LVO -216 (no NDK headers, they clash with ixemul's)
@@ -132,6 +133,7 @@ int main(int argc, char **argv) {
 	MARK("availkb");
 	bool bench = argc > 2 && !strcmp(argv[1], "--bench");
 	const char *path = bench ? argv[2] : (argc > 1 ? argv[1] : NULL);
+	if (bench && argc > 4) _nc_vidmemo_mode = !strcmp(argv[4], "off") ? 0 : !strcmp(argv[4], "verify") ? 2 : 1;
 	setlocale(LC_CTYPE, "");
 	MARK("setlocale");
 	initscr(), raw(), cbreak(), noecho(), start_color();
@@ -210,7 +212,8 @@ int main(int argc, char **argv) {
 		unsigned long a = availkb();
 		if (a < avail_min) avail_min = a;
 		tty = 0;
-		long tp_look0 = _nc_tparm_lookups, tp_walk0 = _nc_tparm_walks, tp_fast0 = _nc_tparm_fast;
+		long tp_look0 = _nc_tparm_lookups, tp_walk0 = _nc_tparm_walks;
+		long vm_c0 = _nc_vidmemo_calls, vm_h0 = _nc_vidmemo_hits, vm_m0 = _nc_vidmemo_misses, vm_b0 = _nc_vidmemo_bad;
 		t0 = nowms();
 		for (int i = 0; i < 20; i++) {
 			scintilla_send_key(sci, SCK_NEXT, SCMOD_NORM);
@@ -220,7 +223,8 @@ int main(int argc, char **argv) {
 			if (i == 2) cap_dump("VTC:ide/cap_scroll.bin");
 			tty += nowms() - t1;
 		}
-		long tp_look = _nc_tparm_lookups - tp_look0, tp_walk = _nc_tparm_walks - tp_walk0, tp_fast = _nc_tparm_fast - tp_fast0;
+		long tp_look = _nc_tparm_lookups - tp_look0, tp_walk = _nc_tparm_walks - tp_walk0;
+		long vm_c = _nc_vidmemo_calls - vm_c0, vm_h = _nc_vidmemo_hits - vm_h0, vm_m = _nc_vidmemo_misses - vm_m0, vm_b = _nc_vidmemo_bad - vm_b0;
 		wr_stat w_scroll = wr_take(); long p_scroll_n = 20;
 		long scroll_ms = (nowms() - t0) / 20, scroll_tty_ms = tty / 20;
 		a = availkb();
@@ -239,7 +243,8 @@ int main(int argc, char **argv) {
 		       open_paint_ms, open_ms - open_paint_ms, key_ms - key_tty_ms, key_tty_ms, scroll_ms - scroll_tty_ms, scroll_tty_ms);
 		fprintf(o, "BENCH open_styled_lines=%ld of %ld rows=%d\n", open_styled_lines, open_lines, LINES);
 		fprintf(o, "BENCH draw_transparent_runs=%ld\n", g_sc_transparent_runs);
-		fprintf(o, "BENCH tparm_lookups=%ld tree_walks=%ld fast=%ld\n", tp_look, tp_walk, tp_fast);
+		fprintf(o, "BENCH tparm_lookups=%ld tree_walks=%ld\n", tp_look, tp_walk);
+		fprintf(o, "BENCH vidmemo mode=%d calls=%ld hits=%ld misses=%ld bad=%ld flush=%ld long=%ld\n", _nc_vidmemo_mode, vm_c, vm_h, vm_m, vm_b, _nc_vidmemo_flush, _nc_vidmemo_long);
 		PROBE_PRINT(o); (void)p_scroll_n;
 		micro_print(o);
 		fprintf(o, "BENCH selects total=%ld nonzero=%ld ms=%ld\n", sel_calls, sel_nz, sel_ms);
