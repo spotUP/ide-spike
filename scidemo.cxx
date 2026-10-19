@@ -94,6 +94,49 @@ PROBE(wcrtomb, size_t, (char *s, wchar_t wc, mbstate_t *ps), (s, wc, ps))
 	p__nc_scroll_optimize_sp_n, p__nc_scroll_optimize_sp_ms, p__nc_hash_map_sp_n, p__nc_hash_map_sp_ms, p_wcrtomb_n, p_wcrtomb_ms)
 #define PROBE_RESET() (p__nc_flush_sp_n = p__nc_flush_sp_ms = p__nc_mvcur_sp_n = p__nc_mvcur_sp_ms = p_vid_puts_sp_n = p_vid_puts_sp_ms = \
 	p__nc_scroll_optimize_sp_n = p__nc_scroll_optimize_sp_ms = p__nc_hash_map_sp_n = p__nc_hash_map_sp_ms = p_wcrtomb_n = p_wcrtomb_ms = 0)
+// PC sampler (flag 'p'): a second exec task (priority 5) wakes every 2 ms on timer.device and reads the PC the
+// scheduler saved for the benchmark task (tc_SPReg + 15 registers + SR); samples count only while wr_on
+// (inside doupdate). Dumped as hex with the address of pc_task so the host can map it to symbols.
+template <int LVO> static inline unsigned long xc(unsigned long d0v, unsigned long d1v, void *a0v, void *a1v, void *a2v = 0, void *a3v = 0) {
+	register void *a6 __asm__("a6") = *(void **)4;
+	register unsigned long d0 __asm__("d0") = d0v, d1 __asm__("d1") = d1v;
+	register void *a0 __asm__("a0") = a0v, *a1 __asm__("a1") = a1v, *a2 __asm__("a2") = a2v, *a3 __asm__("a3") = a3v;
+	__asm__ volatile("jsr %c[o](%%a6)" : "+r"(d0), "+r"(d1), "+r"(a0), "+r"(a1), "+r"(a2), "+r"(a3), "+r"(a6) : [o] "i"(LVO) : "cc", "memory");
+	return d0;
+}
+static unsigned long pc_ring[16384]; static unsigned char pc_state[16384]; static unsigned long pc_stk[8][96]; static long pc_n;
+static volatile int pc_run, pc_done; static char *pc_target;
+static void pc_task() {
+	void *port = (void *)xc<-666>(0, 0, 0, 0);
+	char *io = (char *)xc<-654>(40, 0, port, 0);
+	static const char tname[] = "timer.device";
+	xc<-444>(0, 0, (void *)tname, io);
+	while (pc_run) {
+		*(unsigned short *)(io + 28) = 9; *(long *)(io + 32) = 0; *(long *)(io + 36) = 2000;
+		xc<-456>(0, 0, 0, io);
+		if (wr_on && pc_n < 16384) {
+			unsigned long sp = *(unsigned long *)(pc_target + 54);
+			if (pc_n >= 100 && pc_n < 108) for (int i = 0; i < 96; i++) pc_stk[pc_n - 100][i] = ((unsigned long *)sp)[i];
+			pc_ring[pc_n] = *(unsigned long *)(sp + 172); pc_state[pc_n++] = (unsigned char)pc_target[15];
+		}
+	}
+	pc_done = 1;
+}
+static void pc_start() {
+	char *t = (char *)xc<-198>(92 + 4096, 0x10001, 0, 0);
+	t[8] = 1; t[9] = 5; *(char **)(t + 10) = (char *)"pcsampler";
+	*(char **)(t + 58) = t + 92; *(char **)(t + 62) = t + 92 + 4096; *(char **)(t + 54) = t + 92 + 4096;
+	pc_target = (char *)xc<-294>(0, 0, 0, 0); pc_run = 1;
+	xc<-282>(0, 0, 0, t, (void *)&pc_task, 0);
+}
+static void pc_dump(const char *path) {
+	pc_run = 0; for (long i = 0; i < 4000000 && !pc_done; i++) { } 
+	FILE *f = fopen(path, "w"); if (!f) return;
+	fprintf(f, "base %lx\n", (unsigned long)(void *)&__wrap_write);
+	for (int k = 0; k < 8; k++) { fprintf(f, "stk"); for (int i = 0; i < 96; i++) fprintf(f, " %lx", pc_stk[k][i]); fprintf(f, "\n"); }
+	for (long i = 0; i < pc_n; i++) fprintf(f, "%lx %d\n", pc_ring[i], pc_state[i]);
+	fclose(f);
+}
 struct wr_stat { long calls, bytes, ms; };
 static wr_stat wr_take() { wr_stat w = { wr_calls, wr_bytes, wr_ms }; wr_calls = wr_bytes = wr_ms = 0; return w; }
 #undef lines
@@ -201,6 +244,7 @@ int main(int argc, char **argv) {
 		MARK("refresh");
 		long open_paint_ms = nowms() - t0;
 		cap_buf = (char *)malloc(cap_max); cap_len = 0; wr_on = 1; PROBE_RESET();
+		if (flags && strchr(flags, 'p')) pc_start();
 		long t_dou0 = nowms();
 		doupdate();
 		long t_dou = nowms() - t_dou0;
@@ -257,6 +301,7 @@ int main(int argc, char **argv) {
 		long tp_look = _nc_tparm_lookups - tp_look0, tp_walk = _nc_tparm_walks - tp_walk0;
 		long vm_c = _nc_vidmemo_calls - vm_c0, vm_h = _nc_vidmemo_hits - vm_h0, vm_m = _nc_vidmemo_misses - vm_m0, vm_b = _nc_vidmemo_bad - vm_b0;
 		wr_stat w_scroll = wr_take(); long p_scroll_n = 20;
+		if (flags && strchr(flags, 'p')) pc_dump("VTC:ide/pcs.txt");
 		long scroll_ms = (nowms() - t0) / 20, scroll_tty_ms = tty / 20;
 		a = availkb();
 		if (a < avail_min) avail_min = a;
