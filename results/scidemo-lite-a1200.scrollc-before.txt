@@ -1,0 +1,32 @@
+run1 finished=True rc=0 err=
+BENCH open_ms=2634 key_ms=65 scroll_ms=1202 ram_kb=941
+BENCH avail_start_kb=69044 avail_before_kb=68725 avail_after_load_kb=67967 avail_min_kb=67784 drop_from_start_kb=1260 clock_res_ms=1 styled_samples=1554 of 14479 ctors_run=19
+BENCH split open_paint_ms=1254 open_tty_ms=1380 key_paint_ms=47 key_tty_ms=18 scroll_paint_ms=516 scroll_tty_ms=686
+BENCH open_parts read_ms=116 addtext_ms=430 colour_ms=0 setup_ms=2 refresh_ms=706
+BENCH sciprof cbInsert=429 notifyAfter=1 substance=85 style=131 lineVecInsertText=0 eolscan=208
+BENCH open_probes flush=1/54ms mvcur=59/440ms vidputs=402/739ms scrollopt=0/0ms hashmap=0/0ms doupdate=1376ms write_each=2655:581,2655:65,2190:53,0:0
+BENCH open_styled_lines=31 of 3325 rows=30
+BENCH draw_transparent_runs=0
+BENCH tparm_lookups=1308 tree_walks=0
+BENCH vidmemo mode=1 calls=6062 hits=6020 misses=42 bad=0 flush=2 long=0
+BENCH key_probes keys=50 edit=783ms paint=1555ms flush=50/149ms mvcur=100/151ms vidputs=150/23ms scrollopt=50/157ms hashmap=50/144ms wcrtomb=0/0ms selects=50/121ms first_select=121ms touched_rows_avg=1.00 max=1
+BENCH probes flush=20/664ms mvcur=716/1550ms vidputs=6062/2427ms scrollopt=20/146ms hashmap=20/142ms wcrtomb=0/0ms
+BENCH micro_us_per_call tiparm=398 tiparm_internal_memo=209 cup_spread=306 tputs=60 vid_puts_colour=132 vid_puts_bold=136 (s=0)
+BENCH selects total=120 nonzero=0 ms=6112
+BENCH writes open=3/7500B/699ms key_per=1/87B/2ms scroll_per=2/5697B/152ms
+run2 finished=True rc=0 err=
+BENCH open_ms=2388 key_ms=61 scroll_ms=1200 ram_kb=941
+BENCH avail_start_kb=69059 avail_before_kb=68740 avail_after_load_kb=67977 avail_min_kb=67799 drop_from_start_kb=1260 clock_res_ms=1 styled_samples=1554 of 14479 ctors_run=19
+BENCH split open_paint_ms=1195 open_tty_ms=1193 key_paint_ms=44 key_tty_ms=17 scroll_paint_ms=500 scroll_tty_ms=700
+BENCH open_parts read_ms=77 addtext_ms=430 colour_ms=0 setup_ms=2 refresh_ms=686
+BENCH sciprof cbInsert=429 notifyAfter=1 substance=84 style=131 lineVecInsertText=1 eolscan=208
+BENCH open_probes flush=1/55ms mvcur=59/439ms vidputs=402/557ms scrollopt=0/0ms hashmap=0/0ms doupdate=1189ms write_each=2655:394,2655:65,2190:55,0:0
+BENCH open_styled_lines=31 of 3325 rows=30
+BENCH draw_transparent_runs=0
+BENCH tparm_lookups=1308 tree_walks=0
+BENCH vidmemo mode=1 calls=6062 hits=6020 misses=42 bad=0 flush=2 long=0
+BENCH key_probes keys=50 edit=678ms paint=1481ms flush=50/182ms mvcur=100/148ms vidputs=150/29ms scrollopt=50/158ms hashmap=50/144ms wcrtomb=0/0ms selects=50/62ms first_select=62ms touched_rows_avg=1.00 max=1
+BENCH probes flush=20/664ms mvcur=716/1515ms vidputs=6062/2406ms scrollopt=20/159ms hashmap=20/150ms wcrtomb=0/0ms
+BENCH micro_us_per_call tiparm=398 tiparm_internal_memo=208 cup_spread=305 tputs=59 vid_puts_colour=135 vid_puts_bold=136 (s=0)
+BENCH selects total=120 nonzero=0 ms=6175
+BENCH writes open=3/7500B/514ms key_per=1/87B/3ms scroll_per=2/5697B/150ms
