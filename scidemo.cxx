@@ -67,12 +67,13 @@ static void cap_dump(const char *path) {
 }
 #include <sys/select.h>
 extern "C" int __real_select(int, fd_set *, fd_set *, fd_set *, struct timeval *);
-static long sel_calls, sel_ms, sel_nz;
+static long sel_calls, sel_ms, sel_nz, sel_idx, sel_ms_first;
 extern "C" int __wrap_select(int n, fd_set *r, fd_set *w, fd_set *x, struct timeval *t) {
 	if (!wr_on) return __real_select(n, r, w, x, t);
 	long t0 = nowms();
 	int rc = __real_select(n, r, w, x, t);
-	sel_ms += nowms() - t0; sel_calls++; sel_nz += rc != 0;
+	long d = nowms() - t0; sel_ms += d; sel_calls++; sel_nz += rc != 0;
+	if (sel_idx++ == 0) sel_ms_first += d;
 	return rc;
 }
 // Per-function timing probes inside ncurses doupdate (counts + ms, probe overhead included).
@@ -204,15 +205,27 @@ int main(int argc, char **argv) {
 		// Split each step: Scintilla edit + paint into the curses buffer, then doupdate (terminal write).
 		long tty = 0;
 		t0 = nowms();
+		long k_edit = 0, k_paint = 0, k_touched = 0, k_touched_max = 0; PROBE_RESET(); sel_calls = sel_ms = sel_nz = 0;
 		for (int i = 0; i < 50; i++) {
+			long te = nowms();
 			scintilla_send_key(sci, 'x', SCMOD_NORM);
+			long tp = nowms(); k_edit += tp - te;
 			scintilla_noutrefresh(sci);
+			k_paint += nowms() - tp;
+			{ long n = 0; for (int r = 0; r < LINES; r++) n += is_linetouched(newscr, r) == TRUE; k_touched += n; if (n > k_touched_max) k_touched_max = n; }
 			long t1 = nowms();
+			sel_idx = 0;
 			wr_on = 1; if (i != 10) cap_len = 0; doupdate(); wr_on = 0;
 			if (i == 10) cap_dump("VTC:ide/cap_key.bin");
 			tty += nowms() - t1;
 		}
-		wr_stat w_key = wr_take(); PROBE_RESET();
+		wr_stat w_key = wr_take();
+		char key_probes[400];
+		snprintf(key_probes, sizeof key_probes, "BENCH key_probes keys=50 edit=%ldms paint=%ldms flush=%ld/%ldms mvcur=%ld/%ldms vidputs=%ld/%ldms scrollopt=%ld/%ldms hashmap=%ld/%ldms wcrtomb=%ld/%ldms selects=%ld/%ldms first_select=%ldms touched_rows_avg=%ld.%02ld max=%ld\n",
+			k_edit, k_paint, p__nc_flush_sp_n, p__nc_flush_sp_ms, p__nc_mvcur_sp_n, p__nc_mvcur_sp_ms, p_vid_puts_sp_n, p_vid_puts_sp_ms,
+			p__nc_scroll_optimize_sp_n, p__nc_scroll_optimize_sp_ms, p__nc_hash_map_sp_n, p__nc_hash_map_sp_ms, p_wcrtomb_n, p_wcrtomb_ms,
+			sel_calls, sel_ms, sel_ms_first, k_touched / 50, (k_touched % 50) * 2, k_touched_max);
+		PROBE_RESET(); sel_calls = sel_ms = sel_nz = 0;
 		MARK("keys");
 		long key_ms = (nowms() - t0) / 50, key_tty_ms = tty / 50;
 		unsigned long a = availkb();
@@ -251,6 +264,7 @@ int main(int argc, char **argv) {
 		fprintf(o, "BENCH draw_transparent_runs=%ld\n", g_sc_transparent_runs);
 		fprintf(o, "BENCH tparm_lookups=%ld tree_walks=%ld tiparm_fast=%ld fast_bad=%ld\n", tp_look, tp_walk, tp_fast, _nc_tparm_fast_bad);
 		fprintf(o, "BENCH vidmemo mode=%d calls=%ld hits=%ld misses=%ld bad=%ld flush=%ld long=%ld\n", _nc_vidmemo_mode, vm_c, vm_h, vm_m, vm_b, _nc_vidmemo_flush, _nc_vidmemo_long);
+		fputs(key_probes, o);
 		PROBE_PRINT(o); (void)p_scroll_n;
 		micro_print(o);
 		fprintf(o, "BENCH selects total=%ld nonzero=%ld ms=%ld\n", sel_calls, sel_nz, sel_ms);

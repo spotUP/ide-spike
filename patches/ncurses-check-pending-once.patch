@@ -1,0 +1,25 @@
+doupdate's line-breakout typeahead check ran twice back to back: once before
+the line loop and again at line 0, because the counter started at
+CHECK_INTERVAL. Nothing is written between the two, so the second answer is
+the first one again; the counter now starts at 0 (next check after 5 changed
+lines, as between the later checks). Each check is a select() -> ixemul
+WaitForChar(fh, 0) round trip to the console handler (~27 ms on the A1200
+rig under vtcon), so a 1-line keystroke paid two. Output bytes unchanged.
+Independent of the other ncurses patches; apply in any order, with -p1 inside ncurses/.
+--- a/tty/tty_update.c	2026-10-19 12:59:40
++++ b/tty/tty_update.c	2026-10-19 17:29:45
+@@ -1016,7 +1016,13 @@
+ 	CurScreen(SP_PARM)->_clear = FALSE;	/* reset flag */
+ 	NewScreen(SP_PARM)->_clear = FALSE;	/* reset flag */
+     } else {
+-	int changedlines = CHECK_INTERVAL;
++	/*
++	 * The check below is the first of the line-breakout checks, so the
++	 * counter starts at zero: starting it at CHECK_INTERVAL repeated the
++	 * check at line 0 with nothing written in between.  A check is a
++	 * console round trip (select/WaitForChar), not free.
++	 */
++	int changedlines = 0;
+ 
+ 	if (check_pending(NCURSES_SP_ARG))
+ 	    goto cleanup;
