@@ -104,7 +104,7 @@ template <int LVO> static inline unsigned long xc(unsigned long d0v, unsigned lo
 	__asm__ volatile("jsr %c[o](%%a6)" : "+r"(d0), "+r"(d1), "+r"(a0), "+r"(a1), "+r"(a2), "+r"(a3), "+r"(a6) : [o] "i"(LVO) : "cc", "memory");
 	return d0;
 }
-static unsigned long pc_ring[16384]; static unsigned char pc_state[16384]; static unsigned long pc_stk[8][96]; static long pc_n;
+static unsigned long pc_ring[16384]; static unsigned char pc_state[16384]; static char pc_who[16384][12]; static volatile int pc_on; static unsigned long pc_stk[8][96]; static long pc_n;
 static volatile int pc_run, pc_done; static char *pc_target;
 static void pc_task() {
 	void *port = (void *)xc<-666>(0, 0, 0, 0);
@@ -114,17 +114,22 @@ static void pc_task() {
 	while (pc_run) {
 		*(unsigned short *)(io + 28) = 9; *(long *)(io + 32) = 0; *(long *)(io + 36) = 2000;
 		xc<-456>(0, 0, 0, io);
-		if (wr_on && pc_n < 16384) {
+		if (pc_on && pc_n < 16384) {
+			// who was interrupted: the sampler runs above every task, so the head of exec's TaskReady list (ExecBase+406)
+			// is the task it preempted; an empty list means the CPU was idle. Name copied now (12 chars).
+			{ char *sb = *(char **)4, *hd = *(char **)(sb + 406); const char *nm = "";
+			  if (*(void **)hd) { nm = *(const char **)(hd + 10); if (!nm) nm = "?"; } else nm = "(idle)";
+			  int k = 0; for (; k < 11 && nm[k]; k++) pc_who[pc_n][k] = nm[k]; pc_who[pc_n][k] = 0; }
 			unsigned long sp = *(unsigned long *)(pc_target + 54);
 			if (pc_n >= 100 && pc_n < 108) for (int i = 0; i < 96; i++) pc_stk[pc_n - 100][i] = ((unsigned long *)sp)[i];
-			pc_ring[pc_n] = *(unsigned long *)(sp + 172); pc_state[pc_n++] = (unsigned char)pc_target[15];
+			pc_ring[pc_n] = *(unsigned long *)(sp + 172); pc_state[pc_n++] = (unsigned char)(pc_target[15] | (wr_on ? 0x80 : 0));
 		}
 	}
 	pc_done = 1;
 }
 static void pc_start() {
 	char *t = (char *)xc<-198>(92 + 4096, 0x10001, 0, 0);
-	t[8] = 1; t[9] = 5; *(char **)(t + 10) = (char *)"pcsampler";
+	t[8] = 1; t[9] = 30; *(char **)(t + 10) = (char *)"pcsampler";
 	*(char **)(t + 58) = t + 92; *(char **)(t + 62) = t + 92 + 4096; *(char **)(t + 54) = t + 92 + 4096;
 	pc_target = (char *)xc<-294>(0, 0, 0, 0); pc_run = 1;
 	xc<-282>(0, 0, 0, t, (void *)&pc_task, 0);
@@ -134,7 +139,7 @@ static void pc_dump(const char *path) {
 	FILE *f = fopen(path, "w"); if (!f) return;
 	fprintf(f, "base %lx\n", (unsigned long)(void *)&__wrap_write);
 	for (int k = 0; k < 8; k++) { fprintf(f, "stk"); for (int i = 0; i < 96; i++) fprintf(f, " %lx", pc_stk[k][i]); fprintf(f, "\n"); }
-	for (long i = 0; i < pc_n; i++) fprintf(f, "%lx %d\n", pc_ring[i], pc_state[i]);
+	for (long i = 0; i < pc_n; i++) fprintf(f, "%lx %d %s\n", pc_ring[i], pc_state[i], pc_who[i]);
 	fclose(f);
 }
 struct wr_stat { long calls, bytes, ms; };
@@ -289,7 +294,7 @@ int main(int argc, char **argv) {
 		tty = 0;
 		long tp_look0 = _nc_tparm_lookups, tp_walk0 = _nc_tparm_walks;
 		long vm_c0 = _nc_vidmemo_calls, vm_h0 = _nc_vidmemo_hits, vm_m0 = _nc_vidmemo_misses, vm_b0 = _nc_vidmemo_bad;
-		t0 = nowms();
+		t0 = nowms(); pc_on = 1;
 		for (int i = 0; i < 20; i++) {
 			scintilla_send_key(sci, SCK_NEXT, SCMOD_NORM);
 			scintilla_noutrefresh(sci);
@@ -301,6 +306,7 @@ int main(int argc, char **argv) {
 		long tp_look = _nc_tparm_lookups - tp_look0, tp_walk = _nc_tparm_walks - tp_walk0;
 		long vm_c = _nc_vidmemo_calls - vm_c0, vm_h = _nc_vidmemo_hits - vm_h0, vm_m = _nc_vidmemo_misses - vm_m0, vm_b = _nc_vidmemo_bad - vm_b0;
 		wr_stat w_scroll = wr_take(); long p_scroll_n = 20;
+		pc_on = 0;
 		if (flags && strchr(flags, 'p')) pc_dump("VTC:ide/pcs.txt");
 		long scroll_ms = (nowms() - t0) / 20, scroll_tty_ms = tty / 20;
 		a = availkb();
