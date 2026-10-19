@@ -26,7 +26,7 @@ extern "C" void ixrt_mark(const char *, long);
 // that hunk sat right below the stack; scidemo-lite then crashed in a later virtual call.
 extern "C" { unsigned long __stack = 262144; }
 extern "C" long g_sc_transparent_runs;
-extern "C" long _nc_tparm_lookups, _nc_tparm_walks;
+extern "C" long _nc_tparm_lookups, _nc_tparm_walks, _nc_tparm_fast, _nc_tparm_fast_bad; extern "C" int _nc_tparm_fast_verify; extern "C" char *_nc_tiparm(int, const char *, ...);
 extern "C" long _nc_vidmemo_calls, _nc_vidmemo_hits, _nc_vidmemo_misses, _nc_vidmemo_bad, _nc_vidmemo_flush, _nc_vidmemo_long; extern "C" int _nc_vidmemo_mode; // private ncurses (patches/ncurses-*.patch)
 static void scnotification(SciView *, int, SCNotification *, void *) {}
 
@@ -108,6 +108,12 @@ static void micro_print(FILE *o) {
 	long t0 = nowms();
 	for (int i = 0; i < N; i++) micro_sink += (long)tiparm(set_a_foreground, i & 7);
 	long t_tiparm = nowms() - t0;
+	t0 = nowms();
+	for (int i = 0; i < N; i++) micro_sink += (long)_nc_tiparm(1, set_a_foreground, i & 7);
+	long t_fast = nowms() - t0;
+	t0 = nowms();
+	for (int i = 0; i < N; i++) micro_sink += (long)_nc_tiparm(2, cursor_address, (i * 7) % 24, (i * 13) % 80);
+	long t_cup = nowms() - t0;
 	char *s = tiparm(set_a_foreground, 3);
 	t0 = nowms();
 	for (int i = 0; i < N; i++) tputs(s, 1, micro_out);
@@ -118,7 +124,7 @@ static void micro_print(FILE *o) {
 	t0 = nowms();
 	for (int i = 0; i < N; i++) vid_puts(A_BOLD * (i & 1), 60, NULL, micro_out);
 	long t_vidattr = nowms() - t0;
-	fprintf(o, "BENCH micro_us_per_call tiparm=%ld tputs=%ld vid_puts_colour=%ld vid_puts_bold=%ld (s=%ld)\n", t_tiparm, t_tputs, t_vid, t_vidattr, micro_sink & 1);
+	fprintf(o, "BENCH micro_us_per_call tiparm=%ld tiparm_internal_memo=%ld cup_spread=%ld tputs=%ld vid_puts_colour=%ld vid_puts_bold=%ld (s=%ld)\n", t_tiparm, t_fast, t_cup, t_tputs, t_vid, t_vidattr, micro_sink & 1);
 }
 static long clockres() { // smallest visible gettimeofday step in ms (spin up to 3 s)
 	long t0 = nowms(), t;
@@ -133,7 +139,7 @@ int main(int argc, char **argv) {
 	MARK("availkb");
 	bool bench = argc > 2 && !strcmp(argv[1], "--bench");
 	const char *path = bench ? argv[2] : (argc > 1 ? argv[1] : NULL);
-	if (bench && argc > 4) _nc_vidmemo_mode = !strcmp(argv[4], "off") ? 0 : !strcmp(argv[4], "verify") ? 2 : 1;
+	if (bench && argc > 4) { _nc_vidmemo_mode = !strcmp(argv[4], "off") ? 0 : !strcmp(argv[4], "verify") ? 2 : 1; _nc_tparm_fast_verify = _nc_vidmemo_mode == 2; }
 	setlocale(LC_CTYPE, "");
 	MARK("setlocale");
 	initscr(), raw(), cbreak(), noecho(), start_color();
@@ -212,7 +218,7 @@ int main(int argc, char **argv) {
 		unsigned long a = availkb();
 		if (a < avail_min) avail_min = a;
 		tty = 0;
-		long tp_look0 = _nc_tparm_lookups, tp_walk0 = _nc_tparm_walks;
+		long tp_look0 = _nc_tparm_lookups, tp_walk0 = _nc_tparm_walks, tp_fast0 = _nc_tparm_fast;
 		long vm_c0 = _nc_vidmemo_calls, vm_h0 = _nc_vidmemo_hits, vm_m0 = _nc_vidmemo_misses, vm_b0 = _nc_vidmemo_bad;
 		t0 = nowms();
 		for (int i = 0; i < 20; i++) {
@@ -223,7 +229,7 @@ int main(int argc, char **argv) {
 			if (i == 2) cap_dump("VTC:ide/cap_scroll.bin");
 			tty += nowms() - t1;
 		}
-		long tp_look = _nc_tparm_lookups - tp_look0, tp_walk = _nc_tparm_walks - tp_walk0;
+		long tp_look = _nc_tparm_lookups - tp_look0, tp_walk = _nc_tparm_walks - tp_walk0, tp_fast = _nc_tparm_fast - tp_fast0;
 		long vm_c = _nc_vidmemo_calls - vm_c0, vm_h = _nc_vidmemo_hits - vm_h0, vm_m = _nc_vidmemo_misses - vm_m0, vm_b = _nc_vidmemo_bad - vm_b0;
 		wr_stat w_scroll = wr_take(); long p_scroll_n = 20;
 		long scroll_ms = (nowms() - t0) / 20, scroll_tty_ms = tty / 20;
@@ -243,7 +249,7 @@ int main(int argc, char **argv) {
 		       open_paint_ms, open_ms - open_paint_ms, key_ms - key_tty_ms, key_tty_ms, scroll_ms - scroll_tty_ms, scroll_tty_ms);
 		fprintf(o, "BENCH open_styled_lines=%ld of %ld rows=%d\n", open_styled_lines, open_lines, LINES);
 		fprintf(o, "BENCH draw_transparent_runs=%ld\n", g_sc_transparent_runs);
-		fprintf(o, "BENCH tparm_lookups=%ld tree_walks=%ld\n", tp_look, tp_walk);
+		fprintf(o, "BENCH tparm_lookups=%ld tree_walks=%ld tiparm_fast=%ld fast_bad=%ld\n", tp_look, tp_walk, tp_fast, _nc_tparm_fast_bad);
 		fprintf(o, "BENCH vidmemo mode=%d calls=%ld hits=%ld misses=%ld bad=%ld flush=%ld long=%ld\n", _nc_vidmemo_mode, vm_c, vm_h, vm_m, vm_b, _nc_vidmemo_flush, _nc_vidmemo_long);
 		PROBE_PRINT(o); (void)p_scroll_n;
 		micro_print(o);

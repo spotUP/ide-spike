@@ -1,0 +1,95 @@
+_nc_tiparm memo fast path. Apply after ncurses-tparm-pointer-cache.patch and
+ncurses-vidputs-memo.patch, with -p1 inside the ncurses/ source directory.
+A format seen before with exactly the expected count of numeric parameters
+is answered from its memo without tparm_setup; the memo grows to 64 slots.
+
+--- a/tinfo/lib_tparm.c
++++ b/tinfo/lib_tparm.c
+@@ -137,7 +137,7 @@
+  * set_attributes for the same flags, cursor_address for the same cell) costs a
+  * lookup instead of a full interpretation of the format string.
+  */
+-#define TPARM_MEMO_SIZE 16
++#define TPARM_MEMO_SIZE 64
+ #define TPARM_MEMO_TEXT 48
+ 
+ typedef struct {
+@@ -213,6 +213,7 @@
+ } tparm_ptr_cache[TPARM_PTR_SIZE];
+ NCURSES_EXPORT_VAR(long) _nc_tparm_lookups = 0;	/* tparm_setup calls */
+ NCURSES_EXPORT_VAR(long) _nc_tparm_walks = 0;	/* ... that walked the tree */
++NCURSES_EXPORT_VAR(long) _nc_tparm_fast = 0;	/* _nc_tiparm memo hits before tparm_setup */
+ /* capability strings sit a few bytes apart: mix the address before taking the slot */
+ #define TPARM_PTR_SLOT(s) ((((unsigned long) (s) * 2654435761UL) >> 20) % TPARM_PTR_SIZE)
+ 
+@@ -1464,6 +1465,45 @@
+  * Return a null if the parameter-checks fail.  Otherwise, return a pointer to
+  * the formatted capability string.
+  */
++/*
++ * The memo hit of tparam_internal still pays for tparm_setup (a copy of the
++ * cached entry, strlen and a string compare) and the va_list copy.  mvcur
++ * asks for a dozen hpa/vpa/cup strings per move, so look the format and the
++ * parameters up directly when the format was seen before with exactly the
++ * expected number of numeric parameters.  The format text is compared, not
++ * only its address: tgoto passes caller strings.
++ */
++static TPARM_MEMO *
++tiparm_fast_memo(const char *string, int expected, va_list ap)
++{
++    TPARM_DATA *fs;
++    TPARM_MEMO *memo;
++    TPARM_ARG param[NUM_PARM];
++    unsigned hash = 0;
++    int n;
++    unsigned slot;
++
++    if (string == NULL || expected < 0 || expected > NUM_PARM)
++	return NULL;
++    slot = (unsigned) TPARM_PTR_SLOT(string);
++    if (tparm_ptr_cache[slot].key != string)
++	return NULL;
++    fs = (TPARM_DATA *) tparm_ptr_cache[slot].entry;
++    if (fs == NULL || fs->memo == NULL || fs->tparm_type != 0
++	|| fs->num_actual != expected
++	|| strcmp(fs->format, string) != 0)
++	return NULL;
++    for (n = 0; n < expected; ++n) {
++	param[n] = (TPARM_ARG) va_arg(ap, int);
++	hash = hash * 31u + (unsigned) param[n];
++    }
++    memo = fs->memo + (hash % TPARM_MEMO_SIZE);
++    if (!memo->used
++	|| memcmp(memo->param, param, sizeof(TPARM_ARG) * (size_t) expected))
++	return NULL;
++    return memo;
++}
++
+ NCURSES_EXPORT(char *)
+ _nc_tiparm(int expected, const char *string, ...)
+ {
+@@ -1472,6 +1512,24 @@
+     char *result = NULL;
+ 
+     _nc_tparm_err = 0;
++
++    {
++	va_list ap;
++	TPARM_MEMO *memo;
++
++	va_start(ap, string);
++	memo = tiparm_fast_memo(string, expected, ap);
++	va_end(ap);
++	if (memo != NULL && TPS(fmt_buff) != NULL) {
++	    size_t used = strlen(memo->text);
++
++	    get_space(tps, used + 1);
++	    memcpy(TPS(out_buff), memo->text, used + 1);
++	    TPS(out_used) = used;
++	    ++_nc_tparm_fast;
++	    return TPS(out_buff);
++	}
++    }
+     T((T_CALLED("_nc_tiparm(%d, %s, ...)"), expected, _nc_visbuf(string)));
+ #ifdef TRACE
+     tps->tname = "_nc_tiparm";
