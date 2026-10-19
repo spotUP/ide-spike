@@ -1,0 +1,144 @@
+--- src/scinterm/scinterm-scinterm_6.0/PlatCurses.h.orig	2026-10-19 11:18:48
++++ src/scinterm/scinterm-scinterm_6.0/PlatCurses.h	2026-10-19 11:18:48
+@@ -160,6 +160,12 @@
+ 	static void SetOffsets(int colorOffset, int pairOffset);
+ };
+ 
++// Pending repaint area of a curses window, recorded by `Window::InvalidateAll()` and
++// `Window::InvalidateRectangle()` and consumed by `ScintillaCurses::NoutRefresh()`.
++// Returns false when nothing was invalidated since the last call. Otherwise `rc` is the
++// union of the invalidated rectangles, or the whole window after `InvalidateAll()`.
++bool TakeInvalidatedRectangle(WindowID wid, PRectangle &rc);
++
+ inline WINDOW *_WINDOW(WindowID wid) { return reinterpret_cast<WINDOW *>(wid); }
+ 
+ } // namespace Scintilla::Internal
+--- src/scinterm/scinterm-scinterm_6.0/PlatCurses.cxx.fixB	2026-10-19 11:18:48
++++ src/scinterm/scinterm-scinterm_6.0/PlatCurses.cxx	2026-10-19 11:18:48
+@@ -569,8 +569,32 @@
+ // via `newwin()`, it is safe to use `delwin()`.
+ // It is important to note that even though `ScintillaCurses::wMain` is a Window, its `Destroy()`
+ // function is never called, hence why `scintilla_delete()` is the complement to `scintilla_new()`.
++namespace {
++// Repaint area each curses window has accumulated since its last `NoutRefresh()`.
++struct Invalidation {
++	bool any = false; // something was invalidated
++	bool all = false; // `InvalidateAll()` was called
++	PRectangle rc;
++};
++std::map<WindowID, Invalidation> invalidations;
++} // namespace
++
++bool TakeInvalidatedRectangle(WindowID wid, PRectangle &rc) {
++	auto it = invalidations.find(wid);
++	if (it == invalidations.end() || !it->second.any) return false;
++	const Invalidation inv = it->second;
++	invalidations.erase(it);
++	if (inv.all) {
++		int maxy, maxx;
++		getmaxyx(_WINDOW(wid), maxy, maxx);
++		rc = PRectangle(0, 0, maxx, maxy);
++	} else
++		rc = inv.rc;
++	return true;
++}
++
+ void Window::Destroy() noexcept {
+-	if (wid) delwin(_WINDOW(wid));
++	if (wid) invalidations.erase(wid), delwin(_WINDOW(wid));
+ 	wid = nullptr;
+ }
+ 
+@@ -613,9 +637,26 @@
+ 
+ void Window::Show(bool /*show*/) {} // this curses window will be painted over others as necessary
+ 
+-void Window::InvalidateAll() {} // this window will be completely repainted anyway
++// Scintilla reports the areas that need repainting here, as on the GUI platforms; the
++// next `ScintillaCurses::NoutRefresh()` paints only those rows instead of every visible line.
++void Window::InvalidateAll() {
++	if (!wid) return;
++	Invalidation &inv = invalidations[wid];
++	inv.any = true, inv.all = true;
++}
+ 
+-void Window::InvalidateRectangle(PRectangle /*rc*/) {} // this window will be repainted anyway
++void Window::InvalidateRectangle(PRectangle rc) {
++	if (!wid) return;
++	Invalidation &inv = invalidations[wid];
++	if (inv.all) return;
++	if (inv.any) {
++		inv.rc.left = std::min(inv.rc.left, rc.left), inv.rc.top = std::min(inv.rc.top, rc.top);
++		inv.rc.right = std::max(inv.rc.right, rc.right);
++		inv.rc.bottom = std::max(inv.rc.bottom, rc.bottom);
++	} else
++		inv.rc = rc;
++	inv.any = true;
++}
+ 
+ void Window::SetCursor(Cursor /*curs*/) {}
+ 
+--- src/scinterm/scinterm-scinterm_6.0/ScintillaCurses.cxx.orig	2026-10-19 11:18:48
++++ src/scinterm/scinterm-scinterm_6.0/ScintillaCurses.cxx	2026-10-19 11:18:48
+@@ -125,6 +125,7 @@
+ 	bool capturedMouse; // whether or not the mouse is currently captured
+ 	unsigned int autoCompleteLastClickTime; // last click time in the AC box
+ 	bool draggingVScrollBar, draggingHScrollBar; // a scrollbar is being dragged
++	bool overlayShown = false; // an autocompletion list or calltip was drawn over the buffer
+ 	int dragOffset; // the distance to the position of the scrollbar being dragged
+ 
+ public:
+@@ -478,10 +479,51 @@
+ 	WINDOW *w = GetWINDOW();
+ 	rcPaint.top = 0, rcPaint.left = 0; // paint from (0, 0), not (begy, begx)
+ 	getmaxyx(w, rcPaint.bottom, rcPaint.right);
++	bool paintAll = false;
+ 	if (rcPaint.bottom != height || rcPaint.right != width)
+ 		height = static_cast<int>(rcPaint.bottom), width = static_cast<int>(rcPaint.right),
+-		ChangeSize();
+-	Paint(sur.get(), rcPaint);
++		ChangeSize(), paintAll = true;
++	// A popup drawn over the buffer has gone: repaint the rows it covered.
++	const bool overlay = ac.Active() || ct.inCallTipMode;
++	if (overlayShown && !overlay) paintAll = true;
++	overlayShown = overlay;
++	// Paint only the rows Scintilla invalidated since the last refresh (whole rows, like an
++	// expose event on the GUI platforms) instead of every visible line on every call. Curses
++	// windows keep their cells, so rows outside the area still show the last paint.
++	const WindowID id = wMain.GetID();
++	auto rowsOf = [this](PRectangle rc) {
++		rc.left = 0, rc.right = rcPaint.right;
++		rc.top = std::clamp(std::floor(rc.top), rcPaint.top, rcPaint.bottom);
++		rc.bottom = std::clamp(std::ceil(rc.bottom), rc.top, rcPaint.bottom);
++		return rc;
++	};
++	PRectangle rcArea = rcPaint, rcInvalid;
++	if (paintAll)
++		TakeInvalidatedRectangle(id, rcInvalid); // covered by the full paint
++	else if (TakeInvalidatedRectangle(id, rcInvalid)) {
++		rcArea = rowsOf(rcInvalid);
++		// Style the area first: a style change spilling past it (a new multi-line comment)
++		// invalidates further rows, which this paint can then include.
++		StyleAreaBounded(rcArea, false);
++		if (TakeInvalidatedRectangle(id, rcInvalid))
++			rcArea.top = std::min(rcArea.top, rowsOf(rcInvalid).top),
++			rcArea.bottom = std::max(rcArea.bottom, rowsOf(rcInvalid).bottom);
++	} else
++		rcArea.bottom = rcArea.top; // nothing to draw; Paint() still sends UpdateUI
++	for (int pass = 0; pass < 3; pass++) {
++		Paint(sur.get(), rcArea);
++		if (paintState == PaintState::abandoned) {
++			// Styling or UpdateUI needs rows outside the area: repaint everything, as
++			// ScintillaWin::FullPaint() does. Paint() returns early while abandoned.
++			paintState = PaintState::painting;
++			rcArea = rcPaint;
++			TakeInvalidatedRectangle(id, rcInvalid);
++		} else if (TakeInvalidatedRectangle(id, rcInvalid))
++			rcArea = rowsOf(rcInvalid); // invalidated during the paint
++		else
++			break;
++	}
++	paintState = PaintState::notPainting;
+ 	SetVerticalScrollPos(), SetHorizontalScrollPos();
+ 	wnoutrefresh(w);
+ 	if (ac.Active())

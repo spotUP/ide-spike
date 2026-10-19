@@ -1,0 +1,12 @@
+run1 finished=True rc=0 err=
+BENCH open_ms=9453 key_ms=77 scroll_ms=1537 ram_kb=697
+BENCH avail_start_kb=66468 avail_before_kb=66184 avail_after_load_kb=65682 avail_min_kb=65487 drop_from_start_kb=981 clock_res_ms=1 styled_samples=9088 of 14366 ctors_run=19
+BENCH split open_paint_ms=7824 open_tty_ms=1629 key_paint_ms=52 key_tty_ms=25 scroll_paint_ms=443 scroll_tty_ms=1094
+run2 finished=True rc=0 err=
+BENCH open_ms=9338 key_ms=78 scroll_ms=1537 ram_kb=666
+BENCH avail_start_kb=66483 avail_before_kb=66199 avail_after_load_kb=65679 avail_min_kb=65533 drop_from_start_kb=950 clock_res_ms=1 styled_samples=9088 of 14366 ctors_run=19
+BENCH split open_paint_ms=7857 open_tty_ms=1481 key_paint_ms=54 key_tty_ms=24 scroll_paint_ms=454 scroll_tty_ms=1083
+run3 finished=True rc=0 err=
+BENCH open_ms=9662 key_ms=76 scroll_ms=1533 ram_kb=682
+BENCH avail_start_kb=66483 avail_before_kb=66199 avail_after_load_kb=65727 avail_min_kb=65517 drop_from_start_kb=966 clock_res_ms=1 styled_samples=9088 of 14366 ctors_run=19
+BENCH split open_paint_ms=8045 open_tty_ms=1617 key_paint_ms=54 key_tty_ms=22 scroll_paint_ms=448 scroll_tty_ms=1085

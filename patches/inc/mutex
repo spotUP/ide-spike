@@ -1,0 +1,16 @@
+// Spike shim: libstdc++ here is single-thread (no gthreads). No-op mutex.
+#pragma once
+namespace std {
+struct defer_lock_t { explicit defer_lock_t() = default; };
+inline constexpr defer_lock_t defer_lock{};
+class mutex { public: constexpr mutex() noexcept = default; void lock() {} bool try_lock() { return true; } void unlock() {} };
+template <class M> class lock_guard { public: explicit lock_guard(M &) {} };
+template <class M> class unique_lock {
+public:
+	unique_lock(M &, defer_lock_t) noexcept {}
+	explicit unique_lock(M &) {}
+	void lock() {}
+	void unlock() {}
+	bool owns_lock() const { return true; }
+};
+}

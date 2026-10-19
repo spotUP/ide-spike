@@ -1,0 +1,14 @@
+# build products and rig logs
+build/
+out/
+out-softfloat/
+logs/
+__pycache__/
+# pristine upstream tarballs (re-fetchable)
+*.tgz
+# scratch copies and backups
+nobbb/
+*.orig
+*.pre-*
+t.cpp
+t2.cpp

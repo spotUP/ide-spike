@@ -1,0 +1,9 @@
+bench-mode finished=True rc=rc=1 err=TYPE can't open RAM:b.err
+object is in use
+Type failed returncode 10
+TYPE can't open RAM:b.txt
+object not found
+Type failed returncode 10
+still_running_after_15s=False quit_on_ctrl_q=True rc=rc=1 err=TYPE can't open RAM:b.err
+object is in use
+Type failed returncode 10

@@ -1,0 +1,50 @@
+--- src/scinterm/scinterm-scinterm_6.0/PlatCurses.cxx.orig	2026-10-19 11:04:19
++++ src/scinterm/scinterm-scinterm_6.0/PlatCurses.cxx	2026-10-19 11:04:19
+@@ -271,9 +271,13 @@
+ 		wattr_set(win, attrs, Colors::Pair(fill.colour, fill.colour), nullptr);
+ 		rc.right = static_cast<int>(rc.right), ch = ACS_BULLET | A_BOLD;
+ 	}
++	// One whline() per row writes the cells directly; a mvwaddch() per cell costs a cursor
++	// move, control-character and width checks for every cell.
++	const int x = static_cast<int>(std::max(rc.left, clip.left));
++	const int width = static_cast<int>(std::ceil(rc.right)) - x;
++	if (width <= 0) return;
+ 	for (int y = static_cast<int>(rc.top); y < rc.bottom; y++)
+-		for (int x = static_cast<int>(std::max(rc.left, clip.left)); x < rc.right; x++)
+-			mvwaddch(win, y, x, ch);
++		mvwhline(win, y, x, ch, width);
+ }
+ 
+ // Note: special alignment to pixel boundaries is not needed.
+@@ -351,6 +355,9 @@
+  * @param s The string that contains the first UTF-8 character to display.
+  */
+ int grapheme_width(const char *s) {
++	// ASCII fast path: wcwidth() is 1 for printable ASCII and -1 (mapped to 1 below) for
++	// control characters, so the answer is always 1 without a multibyte conversion.
++	if (static_cast<unsigned char>(*s) < 0x80) return 1;
+ 	wchar_t wch;
+ 	if (mbtowc(&wch, s, MB_CUR_MAX) < 1) return 1;
+ 	int width = wcwidth(wch);
+@@ -376,11 +383,16 @@
+ 	}
+ 	// Do not write beyond right window boundary.
+ 	int clip_chars = getmaxx(win) - static_cast<int>(rc.left);
+-	size_t bytes = 0;
+-	for (int chars = 0; bytes < text.length(); bytes++) {
+-		if (!UTF8IsTrailByte(static_cast<unsigned char>(text[bytes])))
+-			chars += grapheme_width(text.data() + bytes);
+-		if (chars > clip_chars) break;
++	size_t bytes = text.length();
++	// A character never covers more cells than it has bytes, so a run that fits by byte count
++	// fits by width and needs no measuring.
++	if (static_cast<int>(bytes) > clip_chars) {
++		bytes = 0;
++		for (int chars = 0; bytes < text.length(); bytes++) {
++			if (!UTF8IsTrailByte(static_cast<unsigned char>(text[bytes])))
++				chars += grapheme_width(text.data() + bytes);
++			if (chars > clip_chars) break;
++		}
+ 	}
+ 	mvwaddnstr(win, static_cast<int>(rc.top), static_cast<int>(rc.left), text.data(),
+ 		static_cast<int>(std::min(text.length(), bytes)));

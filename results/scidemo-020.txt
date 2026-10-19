@@ -1,0 +1,6 @@
+run1 finished=True rc=1 err=TYPE can't open RAM:b.err
+object is in use
+Type failed returncode 10
+TYPE can't open RAM:b.txt
+object not found
+Type failed returncode 10

@@ -1,0 +1,7 @@
+run1 finished=True rc=0 err=
+BENCH open_ms=9151 key_ms=81 scroll_ms=1462 ram_kb=922
+BENCH avail_start_kb=67019 avail_before_kb=66735 avail_after_load_kb=65959 avail_min_kb=65813 drop_from_start_kb=1206 clock_res_ms=1 styled_samples=9088 of 14366 ctors_run=19
+BENCH split open_paint_ms=7804 open_tty_ms=1347 key_paint_ms=56 key_tty_ms=25 scroll_paint_ms=499 scroll_tty_ms=963
+BENCH probes flush=20/580ms mvcur=580/1854ms vidputs=4771/12485ms scrollopt=20/113ms hashmap=20/105ms wcrtomb=0/0ms
+BENCH selects total=220 nonzero=0 ms=1129
+BENCH writes open=3/6067B/293ms key_per=1/96B/3ms scroll_per=2/4476B/137ms

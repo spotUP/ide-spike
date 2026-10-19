@@ -1,0 +1,7 @@
+# rig 4 --a1200 (020 + 68882), scidemo-lite FPU build linked with the FPU archives, 2026-10-19 ~11:40.
+# Reconstructed from the ide-spike ledger (2026-10-18-ide-spike.progress.md): the original
+# scidemo-lite-a1200.txt was overwritten at 12:05 by a rig 3 probed run. Only these fields survive.
+run1 rc=0 BENCH open_ms=9453 key_ms=77 scroll_ms=1537 ram_kb=697
+run1 BENCH split open_paint_ms=7824 open_tty_ms=1629 key_paint_ms=52 scroll_paint_ms=443 scroll_tty_ms=1094
+run2 rc=0 BENCH open_ms=9338 key_ms=78 scroll_ms=1537 ram_kb=666
+run3 rc=0 BENCH open_ms=9662 key_ms=76 scroll_ms=1533 ram_kb=682

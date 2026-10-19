@@ -1,0 +1,8 @@
+// Spike shim: std::async runs the function synchronously.
+#pragma once
+namespace std {
+enum class launch { async = 1, deferred = 2 };
+template <class T> class future;
+template <> class future<void> { public: void get() {} };
+template <class F> future<void> async(launch, F &&f) { f(); return future<void>(); }
+}

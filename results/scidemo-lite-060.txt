@@ -1,0 +1,4 @@
+run1 finished=True rc=0 err=
+BENCH open_ms=280 key_ms=23 scroll_ms=60 ram_kb=666
+BENCH avail_start_kb=1046706 avail_before_kb=1046422 avail_after_load_kb=1045950 avail_min_kb=1045756 drop_from_start_kb=950 clock_res_ms=1 styled_samples=9088 of 14366 ctors_run=18
+BENCH split open_paint_ms=238 open_tty_ms=42 key_paint_ms=23 key_tty_ms=0 scroll_paint_ms=25 scroll_tty_ms=35

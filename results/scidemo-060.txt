@@ -1,0 +1,3 @@
+run1 finished=True rc=0 err=
+BENCH open_ms=3170 key_ms=2785 scroll_ms=2911 ram_kb=634
+BENCH avail_start_kb=1044113 avail_before_kb=1043843 avail_after_load_kb=1043323 avail_min_kb=1043209 drop_from_start_kb=904 clock_res_ms=1 styled_samples=9088 of 14366 ctors_run=134
