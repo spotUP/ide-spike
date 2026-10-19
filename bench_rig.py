@@ -90,7 +90,7 @@ def one_phase_ok(txt):
 def tparm_cache_ok(txt):
     """tparm sentinel: the capability-format cache is looked up by string address; the strcmp tree walk
     (3.3 s of 020 scroll time) happens only for a first sight. None when the line is missing."""
-    m = re.search(r'BENCH tparm_lookups=(\d+) tree_walks=(\d+)', txt)
+    m = re.search(r'BENCH tparm_lookups=(\d+) tree_walks=(\d+) fast=(\d+)', txt)
     return None if not m else int(m.group(1)) > 0 and int(m.group(2)) * 20 <= int(m.group(1))
 
 

@@ -26,7 +26,7 @@ extern "C" void ixrt_mark(const char *, long);
 // that hunk sat right below the stack; scidemo-lite then crashed in a later virtual call.
 extern "C" { unsigned long __stack = 262144; }
 extern "C" long g_sc_transparent_runs;
-extern "C" long _nc_tparm_lookups, _nc_tparm_walks; // private ncurses (patches/ncurses-*.patch)
+extern "C" long _nc_tparm_lookups, _nc_tparm_walks, _nc_tparm_fast; // private ncurses (patches/ncurses-*.patch)
 static void scnotification(SciView *, int, SCNotification *, void *) {}
 
 // bench helpers: AvailMem(MEMF_ANY) via exec LVO -216 (no NDK headers, they clash with ixemul's)
@@ -94,6 +94,31 @@ PROBE(wcrtomb, size_t, (char *s, wchar_t wc, mbstate_t *ps), (s, wc, ps))
 	p__nc_scroll_optimize_sp_n = p__nc_scroll_optimize_sp_ms = p__nc_hash_map_sp_n = p__nc_hash_map_sp_ms = p_wcrtomb_n = p_wcrtomb_ms = 0)
 struct wr_stat { long calls, bytes, ms; };
 static wr_stat wr_take() { wr_stat w = { wr_calls, wr_bytes, wr_ms }; wr_calls = wr_bytes = wr_ms = 0; return w; }
+#undef lines
+#include <term.h>
+#undef lines
+#undef columns
+// Per-call cost of the pieces of one colour change on this CPU (N calls each, 1 ms clock).
+static long micro_sink;
+static int micro_out(int ch) { micro_sink += ch; return ch; }
+static void micro_print(FILE *o) {
+	const int N = 1000;
+	init_pair(60, COLOR_RED, COLOR_BLUE); init_pair(61, COLOR_GREEN, COLOR_BLACK);
+	long t0 = nowms();
+	for (int i = 0; i < N; i++) micro_sink += (long)tiparm(set_a_foreground, i & 7);
+	long t_tiparm = nowms() - t0;
+	char *s = tiparm(set_a_foreground, 3);
+	t0 = nowms();
+	for (int i = 0; i < N; i++) tputs(s, 1, micro_out);
+	long t_tputs = nowms() - t0;
+	t0 = nowms();
+	for (int i = 0; i < N; i++) vid_puts(A_NORMAL, 60 + (i & 1), NULL, micro_out);
+	long t_vid = nowms() - t0;
+	t0 = nowms();
+	for (int i = 0; i < N; i++) vid_puts(A_BOLD * (i & 1), 60, NULL, micro_out);
+	long t_vidattr = nowms() - t0;
+	fprintf(o, "BENCH micro_us_per_call tiparm=%ld tputs=%ld vid_puts_colour=%ld vid_puts_bold=%ld (s=%ld)\n", t_tiparm, t_tputs, t_vid, t_vidattr, micro_sink & 1);
+}
 static long clockres() { // smallest visible gettimeofday step in ms (spin up to 3 s)
 	long t0 = nowms(), t;
 	long end = t0 + 3000;
@@ -185,7 +210,7 @@ int main(int argc, char **argv) {
 		unsigned long a = availkb();
 		if (a < avail_min) avail_min = a;
 		tty = 0;
-		long tp_look0 = _nc_tparm_lookups, tp_walk0 = _nc_tparm_walks;
+		long tp_look0 = _nc_tparm_lookups, tp_walk0 = _nc_tparm_walks, tp_fast0 = _nc_tparm_fast;
 		t0 = nowms();
 		for (int i = 0; i < 20; i++) {
 			scintilla_send_key(sci, SCK_NEXT, SCMOD_NORM);
@@ -195,7 +220,7 @@ int main(int argc, char **argv) {
 			if (i == 2) cap_dump("VTC:ide/cap_scroll.bin");
 			tty += nowms() - t1;
 		}
-		long tp_look = _nc_tparm_lookups - tp_look0, tp_walk = _nc_tparm_walks - tp_walk0;
+		long tp_look = _nc_tparm_lookups - tp_look0, tp_walk = _nc_tparm_walks - tp_walk0, tp_fast = _nc_tparm_fast - tp_fast0;
 		wr_stat w_scroll = wr_take(); long p_scroll_n = 20;
 		long scroll_ms = (nowms() - t0) / 20, scroll_tty_ms = tty / 20;
 		a = availkb();
@@ -214,8 +239,9 @@ int main(int argc, char **argv) {
 		       open_paint_ms, open_ms - open_paint_ms, key_ms - key_tty_ms, key_tty_ms, scroll_ms - scroll_tty_ms, scroll_tty_ms);
 		fprintf(o, "BENCH open_styled_lines=%ld of %ld rows=%d\n", open_styled_lines, open_lines, LINES);
 		fprintf(o, "BENCH draw_transparent_runs=%ld\n", g_sc_transparent_runs);
-		fprintf(o, "BENCH tparm_lookups=%ld tree_walks=%ld\n", tp_look, tp_walk);
+		fprintf(o, "BENCH tparm_lookups=%ld tree_walks=%ld fast=%ld\n", tp_look, tp_walk, tp_fast);
 		PROBE_PRINT(o); (void)p_scroll_n;
+		micro_print(o);
 		fprintf(o, "BENCH selects total=%ld nonzero=%ld ms=%ld\n", sel_calls, sel_nz, sel_ms);
 		fprintf(o, "BENCH writes open=%ld/%ldB/%ldms key_per=%ld/%ldB/%ldms scroll_per=%ld/%ldB/%ldms\n",
 		       w_open.calls, w_open.bytes, w_open.ms, w_key.calls / 50, w_key.bytes / 50, w_key.ms / 50,
