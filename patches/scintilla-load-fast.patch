@@ -1,6 +1,8 @@
+diff --git a/src/scintilla/scintilla/src/CellBuffer.cxx b/src/scintilla/scintilla/src/CellBuffer.cxx
+index a12b697..7194e8f 100644
 --- a/src/scintilla/scintilla/src/CellBuffer.cxx
 +++ b/src/scintilla/scintilla/src/CellBuffer.cxx
-@@ -912,11 +912,19 @@
+@@ -912,12 +912,20 @@ void CellBuffer::BasicInsertString(Sci::Position position, const char *s, Sci::P
  		do {
  			// skip to line end
  			ch = *ptr++;
@@ -13,7 +15,7 @@
 +			// the cost per byte (208 ms for 100 KB on the A1200, 109 ms for a bare scan).
 +			while (eolTable[ch] == 0 && ptr < end) {
  				ch = *ptr++;
-+			}
+ 			}
 +			const uint8_t type = eolTable[ch];
 +			if (ptr - scanned >= 2) {
 +				chPrev = static_cast<unsigned char>(ptr[-2]);
@@ -21,9 +23,12 @@
 +			} else if (ptr - scanned == 1) {
 +				chBeforePrev = chPrev;
 +				chPrev = static_cast<unsigned char>(ptr[-2]);
- 			}
++			}
  			switch (type) {
  			case 2: // '\r'
+ 				if (*ptr == '\n') {
+diff --git a/src/scintilla/scintilla/src/SplitVector.h b/src/scintilla/scintilla/src/SplitVector.h
+index 4ed7b04..9a4f471 100644
 --- a/src/scintilla/scintilla/src/SplitVector.h
 +++ b/src/scintilla/scintilla/src/SplitVector.h
 @@ -9,14 +9,38 @@
@@ -40,7 +45,7 @@
 +// Allocator whose argument-less construct() default-initialises: vector::resize leaves new
 +// bytes of the gap uninitialised instead of zero-filling them (a byte loop here: ~70 ms for
 +// each 100 KB buffer of a document load on the A1200). The gap's contents are never read.
- template <typename T>
++template <typename T>
 +struct NoInitAllocator : std::allocator<T> {
 +	template <typename U> struct rebind { using other = NoInitAllocator<U>; };
 +	NoInitAllocator() noexcept = default;
@@ -56,7 +61,7 @@
 +};
 +
 +
-+template <typename T>
+ template <typename T>
  class SplitVector {
  	static constexpr size_t growthPortion = 6;
  	static constexpr size_t initialGrowSize = 8;
@@ -66,31 +71,21 @@
  	T empty;	/// Returned as the result of out-of-bounds access.
  	ptrdiff_t lengthBody = 0;
  	ptrdiff_t part1Length = 0;
-@@ -188,7 +212,22 @@
+@@ -188,7 +212,12 @@ public:
  			}
  			RoomFor(insertLength);
  			GapTo(position);
 -			std::fill_n(body.data() + part1Length, insertLength, v);
 +			if constexpr (sizeof(T) == 1 && std::is_trivially_copyable<T>::value) {
-+				// std::fill_n is a byte loop (132 ms for 100 KB of style bytes on the A1200) and ixemul's
-+				// memset is nearly as slow (66 ms), but its memcpy is a block move (4 ms): seed 16 bytes,
-+				// then double the filled run with non-overlapping memcpy (3 ms).
-+				unsigned char *const dest = reinterpret_cast<unsigned char *>(body.data() + part1Length);
-+				const size_t total = static_cast<size_t>(insertLength);
-+				size_t done = total < 16 ? total : 16;
-+				memset(dest, static_cast<int>(static_cast<unsigned char>(v)), done);
-+				while (done < total) {
-+					const size_t chunk = done < total - done ? done : total - done;
-+					memcpy(dest + done, dest, chunk);
-+					done += chunk;
-+				}
++				// memset: std::fill_n is a byte loop (132 ms for 100 KB of style bytes on the A1200)
++				memset(static_cast<void *>(body.data() + part1Length), static_cast<int>(v), insertLength);
 +			} else {
 +				std::fill_n(body.data() + part1Length, insertLength, v);
 +			}
  			lengthBody += insertLength;
  			part1Length += insertLength;
  			gapLength -= insertLength;
-@@ -236,7 +275,12 @@
+@@ -236,7 +265,12 @@ public:
  			}
  			RoomFor(insertLength);
  			GapTo(positionToInsert);

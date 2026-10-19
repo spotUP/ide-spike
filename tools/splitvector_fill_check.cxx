@@ -1,5 +1,5 @@
-// Host check for patches/scintilla-load-fast.patch: SplitVector<char>::InsertValue (doubling memcpy fill)
-// must give the same bytes as a plain fill for every length around the 16-byte seed and the doubling steps,
+// Host check for SplitVector<char>::InsertValue in patches/scintilla-load-fast.patch: the fill (one memset)
+// must give the same bytes as a plain fill for every length around 16 and the 4 KB steps,
 // at every gap position. Build: c++ -std=c++17 -DNDEBUG -I src/scintilla/scintilla/src -I src/scintilla/scintilla/include \
 //   tools/splitvector_fill_check.cxx -o /tmp/svcheck && /tmp/svcheck
 #include <cstdio>
