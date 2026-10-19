@@ -211,7 +211,7 @@ diff --color -ruN a/widechar/lib_vid_attr.c b/widechar/lib_vid_attr.c
  {
      int color_pair = pair_arg;
  #if NCURSES_EXT_COLORS
-@@ -285,6 +285,174 @@
+@@ -285,6 +285,179 @@
      (void) opts;
      set_color(newmode, color_pair);
      returnCode(NCURSES_SP_NAME(vidputs) (NCURSES_SP_ARGx newmode, outc));
@@ -233,7 +233,8 @@ diff --color -ruN a/widechar/lib_vid_attr.c b/widechar/lib_vid_attr.c
 + * _nc_vidmemo_mode: 0 off, 1 on, 2 verify (run the real code on every hit
 + * and count differences in _nc_vidmemo_bad; the real bytes are emitted).
 + */
-+#define VIDMEMO_SIZE 4096
++#define VIDMEMO_BITS 12
++#define VIDMEMO_SIZE (1 << VIDMEMO_BITS)
 +#define VIDMEMO_BYTES 64
 +typedef struct {
 +    attr_t old_attr, new_attr;
@@ -327,9 +328,13 @@ diff --color -ruN a/widechar/lib_vid_attr.c b/widechar/lib_vid_attr.c
 +    old_pair = GetPair(SCREEN_ATTRS(SP_PARM));
 +    nm = newmode & A_ATTRIBUTES;
 +    new_pair = (opts != NULL) ? *(int *) opts : (int) pair_arg;	/* what the body uses */
-+    m = &vidmemo[(((unsigned long) old_attr * 31UL + (unsigned long) nm) * 31UL
-+		  + (unsigned long) old_pair * 7UL + (unsigned long) new_pair)
-+		 % VIDMEMO_SIZE];
++    /* multiplicative hash, top bits: attribute bits sit at bit 16 and up,
++       so a plain sum modulo the table size would drop them and let bold and
++       plain transitions on one pair evict each other */
++    m = &vidmemo[(((unsigned long) old_attr * 0x9E3779B1UL
++		   + (unsigned long) nm * 0x85EBCA6BUL
++		   + (((unsigned long) old_pair << 16) ^ (unsigned long) new_pair)
++		   * 0xC2B2AE35UL) & 0xFFFFFFFFUL) >> (32 - VIDMEMO_BITS)];
 +    ++_nc_vidmemo_calls;
 +    if (m->len >= 0 && m->old_attr == old_attr && m->new_attr == nm
 +	&& m->old_pair == old_pair && m->new_pair == new_pair) {
